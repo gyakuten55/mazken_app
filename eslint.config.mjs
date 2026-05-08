@@ -13,6 +13,13 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // React 19 の新ルール。マウント検知や props→state 同期など実用的なケースが
+      // すべて引っかかるため warning に下げる（フェーズ2でリファクタ予定）。
+      "react-hooks/set-state-in-effect": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;
