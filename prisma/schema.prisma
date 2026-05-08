@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ===== 営業所 =====
+model BranchOffice {
+  id        Int      @id @default(autoincrement())
+  name      String   // "本社", "高瀬営業所" etc.
+  code      String   @unique // "HQ", "TKS" etc.
+  color     String   // HEX color "#7C3AED"
+  address   String?
+  phone     String?
+  fax       String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff    Staff[]
+  jobSites JobSite[]
+  users    User[]
+
+  @@map("branch_offices")
+}
+
+// ===== 資格マスタ =====
+model Qualification {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique // "普通自動車免許", "大型免許", "ハーネス"
+  category  String?  // "license", "certification", "other"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  staffQualifications  StaffQualification[]
+  jobSiteBonuses       JobSiteQualificationBonus[]
+
+  @@map("qualifications")
+}
+
+// ===== スタッフ =====
+model Staff {
+  id             Int      @id @default(autoincrement())
+  employeeCode   String   @unique // 社員コード
+  branchOfficeId Int
+  name           String
+  nameKana       String   // フリガナ
+  displayName    String?  // 表示名（カレンダー用短縮名）
+  phone          String?
+  insuranceType  String   @default("company") // [DEPRECATED] 互換用。新コードは hasShaho/hasKokuho/hasIchiriOyakata を使う
+  hasShaho           Boolean @default(false) // 社保加入
+  hasKokuho          Boolean @default(false) // 国保加入
+  hasIchiriOyakata   Boolean @default(false) // 一人親方
+  residenceType  String   @default("commuter") // "dorm1"=寮生1, "dorm2"=寮生2, "commuter"=通い
+  role           String   @default("worker")  // "admin","manager","office","worker"
+  dailyRate      Int?     // 基本日当
+  isActive       Boolean  @default(true)
+  licenseExpiry  String?  // 免許期限
+  openingBalance     Int     @default(0)  // 期首残高（導入時の前期繰越）
+  openingBalanceDate String?              // YYYY-MM-DD（この日以降が集計対象）
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  branchOffice        BranchOffice         @relation(fields: [branchOfficeId], references: [id])
+  staffQualifications StaffQualification[]
+  assignments         Assignment[]
+  dailyPayments       DailyPayment[]
+  user                User?
+
+  @@index([branchOfficeId])
+  @@map("staff")
+}
+
+// ===== スタッフ資格 =====
+model StaffQualification {
+  id              Int      @id @default(autoincrement())
+  staffId         Int
+  qualificationId Int
+  expiryDate      String?
+
+  staff         Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, qualificationId])
+  @@map("staff_qualifications")
+}
+
+// ===== 現場 =====
+model JobSite {
+  id               Int      @id @default(autoincrement())
+  siteCode         String   @unique // 現場コード
+  name             String
+  clientName       String?  // 元請け会社名
+  branchOfficeId   Int
+  address          String?
+  contactName1     String?
+  contactTel1      String?
+  contactName2     String?
+  contactTel2      String?
+  contactName3     String?
+  contactTel3      String?
+  transportation   String?  // 交通手段
+  startDate        String?  // YYYY-MM-DD
+  endDate          String?
+  status           String   @default("active") // "active","completed","cancelled"
+  requiredInsurance String? // "any","company_only","national_only"
+  workCategory     String   @default("spot") // "chikuro"=築炉工事, "regular"=レギュラー, "spot"=スポット
+  requiredHeadcount Int?    // 案件で必要な人数（注文集計用）
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  branchOffice         BranchOffice          @relation(fields: [branchOfficeId], references: [id])
+  assignments          Assignment[]
+  workCompletionForms  WorkCompletionForm[]
+  dailyPaymentsAsSite1 DailyPayment[]        @relation("DailyPaymentSite1")
+  dailyPaymentsAsSite2 DailyPayment[]        @relation("DailyPaymentSite2")
+  qualificationBonuses JobSiteQualificationBonus[]
+
+  @@index([branchOfficeId])
+  @@map("job_sites")
+}
+
+// ===== 現場 × 資格 加算料金（特殊技能料金）=====
+model JobSiteQualificationBonus {
+  id              Int   @id @default(autoincrement())
+  jobSiteId       Int
+  qualificationId Int
+  bonusAmount     Int   @default(0) // 1日あたりの加算額（円）
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  jobSite       JobSite       @relation(fields: [jobSiteId], references: [id], onDelete: Cascade)
+  qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+
+  @@unique([jobSiteId, qualificationId])
+  @@index([jobSiteId])
+  @@map("job_site_qualification_bonuses")
+}
+
+// ===== 車両 =====
+model Vehicle {
+  id             Int      @id @default(autoincrement())
+  plateNumber    String   @unique // 車両ナンバー "京都500あ1234"
+  name           String?           // 愛称 "ハイエース1号"
+  vehicleType    String?           // "普通車","軽","トラック" 等
+  inspectionDate String?           // 車検日 YYYY-MM-DD
+  notes          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assignments    Assignment[]
+
+  @@map("vehicles")
+}
+
+// ===== 配置 =====
+model Assignment {
+  id                Int      @id @default(autoincrement())
+  staffId           Int?     // null=未割当（現場枠だけ先に確保し、後からスタッフを当てる）
+  jobSiteId         Int
+  vehicleId         Int?
+  startDate         String   // YYYY-MM-DD
+  endDate           String
+  assignmentType    String   @default("commute") // "commute"=通い, "business_trip"=出張
+  shiftType         String   @default("day")      // "day"=日勤, "night"=夜勤
+  startTime         String   @default("08:00")
+  endTime           String   @default("18:00")
+  dailyRateOverride Int?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  staff          Staff?          @relation(fields: [staffId], references: [id])
+  jobSite        JobSite         @relation(fields: [jobSiteId], references: [id])
+  vehicle        Vehicle?        @relation(fields: [vehicleId], references: [id])
+  assignmentDays AssignmentDay[]
+
+  @@index([staffId])
+  @@index([jobSiteId])
+  @@index([vehicleId])
+  @@index([startDate, endDate])
+  @@map("assignments")
+}
+
+// ===== 配置日個別管理（痛点#2解決の核心）=====
+model AssignmentDay {
+  id                Int      @id @default(autoincrement())
+  assignmentId      Int
+  date              String   // YYYY-MM-DD
+  status            String   @default("scheduled") // "scheduled","cancelled","completed"
+  startTime         String?  // override
+  endTime           String?  // override
+  overtimeHours     Float    @default(0)
+  dailyRateOverride Int?
+  notes             String?
+  acknowledgedAt    DateTime?
+  acknowledgedBy    Int?
+
+  assignment          Assignment           @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  acknowledger        User?                @relation("AssignmentDayAck", fields: [acknowledgedBy], references: [id])
+  workCompletionForms WorkCompletionForm[]
+
+  @@unique([assignmentId, date])
+  @@index([date])
+  @@index([status])
+  @@map("assignment_days")
+}
+
+// ===== 出来高請求書 =====
+model WorkCompletionForm {
+  id               Int      @id @default(autoincrement())
+  assignmentDayId  Int?
+  jobSiteId        Int
+  date             String   // YYYY-MM-DD
+  workContent      String?
+  quantity         String?  // "45m2" etc.
+  unit             String?
+  staffNames       String?  // JSON array
+  startTime        String?
+  endTime          String?
+  overtimeHours    Float    @default(0)
+  clientSignature  String?  // base64
+  clientName       String?
+  isSubmitted      Boolean  @default(false)
+  submittedAt      DateTime?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignmentDay AssignmentDay? @relation(fields: [assignmentDayId], references: [id])
+  jobSite       JobSite        @relation(fields: [jobSiteId], references: [id])
+
+  @@index([date])
+  @@map("work_completion_forms")
+}
+
+// ===== ログインユーザー =====
+model User {
+  id             Int      @id @default(autoincrement())
+  username       String   @unique
+  passwordHash   String
+  name           String
+  role           String   @default("office") // "admin","manager","office","viewer","staff"
+  branchOfficeId Int?
+  staffId        Int?     @unique // スタッフロールの場合、紐付くスタッフID
+  isActive       Boolean  @default(true)
+  loginToken     String?  @unique
+  loginTokenAt   DateTime?
+  createdAt      DateTime @default(now())
+
+  branchOffice        BranchOffice?   @relation(fields: [branchOfficeId], references: [id])
+  staff               Staff?          @relation(fields: [staffId], references: [id])
+  acknowledgedDays    AssignmentDay[] @relation("AssignmentDayAck")
+
+  @@map("users")
+}
+
+// ===== 監査ログ =====
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  username  String?  // 非正規化（user 削除後も見られるように）
+  action    String   // "create" | "update" | "delete"
+  model     String   // "Assignment" | "AssignmentDay" | "Staff" | "JobSite" | "User" | "WorkCompletionForm" | "Vehicle"
+  recordId  String   // 対象 ID（複合キーもあるので string）
+  diff      String?  // JSON { before?, after? } 抜粋
+  createdAt DateTime @default(now())
+
+  @@index([model, recordId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ===== 日計表 =====
+model DailyPayment {
+  id      Int    @id @default(autoincrement())
+  date    String // YYYY-MM-DD
+  staffId Int
+
+  // Site 1（メイン現場）
+  site1Id         Int?
+  site1BaseFee    Int @default(0) // 基本料金
+  site1Driving    Int @default(0) // 現場運転
+  site1Holiday    Int @default(0) // 自社計画
+  site1Lift       Int @default(0) // リフト
+  site1Skill      Int @default(0) // 特殊技能
+  site1Other      Int @default(0) // その他
+  site1Additional Int @default(0) // 追加料金
+
+  // Site 2（掛け持ち時のみ）
+  site2Id         Int?
+  site2BaseFee    Int @default(0)
+  site2Driving    Int @default(0)
+  site2Holiday    Int @default(0)
+  site2Lift       Int @default(0)
+  site2Skill      Int @default(0)
+  site2Other      Int @default(0)
+  site2Additional Int @default(0)
+
+  // 相殺明細
+  safetyOffset  Int @default(500) // 安全会費（初期値 500）
+  lodgingOffset Int @default(0)   // 宿泊費
+  otherOffset   Int @default(0)   // その他相殺
+  advanceOffset Int @default(0)   // 前渡金
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  site1 JobSite? @relation("DailyPaymentSite1", fields: [site1Id], references: [id])
+  site2 JobSite? @relation("DailyPaymentSite2", fields: [site2Id], references: [id])
+
+  @@unique([staffId, date])
+  @@index([date])
+  @@index([staffId])
+  @@map("daily_payments")
+}

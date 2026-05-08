@@ -1,0 +1,164 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  Calendar,
+  Users,
+  Building2,
+  FileText,
+  MoreHorizontal,
+  Download,
+  Printer,
+  LogOut,
+  Truck,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+
+const allBottomNavItems = [
+  { href: "/calendar", label: "カレンダー", icon: Calendar, staffVisible: true },
+  { href: "/staff", label: "スタッフ", icon: Users, staffVisible: false },
+  { href: "/sites", label: "現場", icon: Building2, staffVisible: false },
+  { href: "/forms", label: "出来高", icon: FileText, staffVisible: true },
+];
+
+const moreMenuItems = [
+  { href: "/vehicles", label: "車両管理", icon: Truck },
+  { href: "/export", label: "CSV出力", icon: Download },
+  { href: "/print/daily", label: "印刷", icon: Printer },
+];
+
+export function MobileNav({ userRole }: { userRole: string }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const handleLogout = async () => {
+    setMoreOpen(false);
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
+  const isStaff = userRole === "staff";
+  const bottomNavItems = allBottomNavItems.filter((item) => !isStaff || item.staffVisible);
+
+  const isMoreActive =
+    !isStaff && moreMenuItems.some((item) => pathname.startsWith(item.href));
+
+  return (
+    <>
+      {/* Top bar - simple title only */}
+      <header className="md:hidden flex items-center h-14 px-4 border-b bg-sidebar text-sidebar-foreground fixed top-0 left-0 right-0 z-50">
+        <div className="leading-none">
+          <span className="font-bold text-base">マツケン</span>
+          <span className="text-xs text-sidebar-foreground/60 ml-2">配置管理</span>
+        </div>
+      </header>
+
+      {/* Bottom tab bar */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-card z-50 safe-area-inset-bottom shadow-[0_-1px_4px_rgba(0,0,0,0.04)]"
+        aria-label="メインメニュー"
+      >
+        <div className="flex items-stretch justify-around h-[72px]">
+          {bottomNavItems.map((item) => {
+            const isActive =
+              item.href === "/calendar"
+                ? pathname === item.href
+                : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={isActive ? "page" : undefined}
+                aria-label={item.label}
+                className={cn(
+                  "relative flex flex-col items-center justify-center gap-1 flex-1 pt-2 pb-1.5 text-xs transition-colors",
+                  isActive ? "text-primary font-semibold" : "text-muted-foreground",
+                )}
+              >
+                {isActive && (
+                  <span
+                    aria-hidden
+                    className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-1 rounded-b-full bg-primary"
+                  />
+                )}
+                <item.icon
+                  className={cn(
+                    "h-6 w-6 transition-colors",
+                    isActive && "text-primary",
+                  )}
+                />
+                <span className="leading-tight">{item.label}</span>
+              </Link>
+            );
+          })}
+
+          {/* More menu */}
+          <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+            <SheetTrigger
+              aria-label="その他のメニュー"
+              aria-current={isMoreActive ? "page" : undefined}
+              className={cn(
+                "relative flex flex-col items-center justify-center gap-1 flex-1 pt-2 pb-1.5 text-xs transition-colors",
+                isMoreActive
+                  ? "text-primary font-semibold"
+                  : "text-muted-foreground",
+              )}
+            >
+              {isMoreActive && (
+                <span
+                  aria-hidden
+                  className="absolute top-0 left-1/2 -translate-x-1/2 w-10 h-1 rounded-b-full bg-primary"
+                />
+              )}
+              <MoreHorizontal
+                className={cn(
+                  "h-6 w-6 transition-colors",
+                  isMoreActive && "text-primary",
+                )}
+              />
+              <span className="leading-tight">その他</span>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="rounded-t-2xl px-0 pb-8">
+              <SheetTitle className="px-5 pb-2 text-lg font-bold">メニュー</SheetTitle>
+              <nav className="flex flex-col" aria-label="追加メニュー">
+                {!isStaff && moreMenuItems.map((item) => {
+                  const isActive = pathname.startsWith(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMoreOpen(false)}
+                      aria-current={isActive ? "page" : undefined}
+                      className={cn(
+                        "flex items-center gap-3 px-5 py-4 text-base font-medium transition-colors",
+                        isActive
+                          ? "text-primary bg-primary/5 font-semibold"
+                          : "text-foreground hover:bg-accent",
+                      )}
+                    >
+                      <item.icon className="h-6 w-6" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+                {!isStaff && <div className="border-t my-1" />}
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-3 px-5 py-4 text-base font-medium text-muted-foreground hover:bg-accent transition-colors w-full text-left"
+                >
+                  <LogOut className="h-6 w-6" />
+                  ログアウト
+                </button>
+              </nav>
+            </SheetContent>
+          </Sheet>
+        </div>
+      </nav>
+    </>
+  );
+}

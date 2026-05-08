@@ -1,0 +1,1758 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Trash2,
+  MoreHorizontal,
+  AlertTriangle,
+  FileText,
+  Search,
+  X,
+  Users,
+  Building2,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import {
+  getWeekDates,
+  formatDateJP,
+  formatDateISO,
+  formatDateRange,
+  isWeekend,
+  isSunday,
+  addWeeks,
+  subWeeks,
+} from "@/lib/date-utils";
+import { AssignmentPanel } from "./assignment-panel";
+import { BulkAssignmentPanel } from "./bulk-assignment-panel";
+import { CalendarPrint } from "./calendar-print";
+import { Printer } from "lucide-react";
+import { toast } from "sonner";
+import { getHolidayName } from "@/lib/holidays";
+import type { Assignment, StaffRow, HeadcountData, HeadcountBySite, BranchOffice, ContextMenu } from "./types";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+
+export function CalendarView({
+  branchOffices,
+}: {
+  branchOffices: BranchOffice[];
+}) {
+  const router = useRouter();
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [today, setToday] = useState("");
+  useEffect(() => { setToday(formatDateISO(new Date())); }, []);
+  const [staffRows, setStaffRows] = useState<StaffRow[]>([]);
+  const [allSites, setAllSites] = useState<{ id: number; name: string; siteCode: string; branchOffice: { color: string; name: string } }[]>([]);
+  const [unassignedAssignments, setUnassignedAssignments] = useState<Assignment[]>([]);
+  const [headcounts, setHeadcounts] = useState<HeadcountData[]>([]);
+  const [headcountBySite, setHeadcountBySite] = useState<HeadcountBySite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedBranches, setSelectedBranches] = useState<number[]>([]);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedAssignment, setSelectedAssignment] =
+    useState<Assignment | null>(null);
+  const [weeksToShow, setWeeksToShow] = useState(1);
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  const [showPrint, setShowPrint] = useState(false);
+  const [printStart, setPrintStart] = useState("");
+  const [printEnd, setPrintEnd] = useState("");
+  const [printPopoverOpen, setPrintPopoverOpen] = useState(false);
+
+  // --- View mode: staff / site ---
+  const [viewMode, setViewMode] = useState<"staff" | "site">("site");
+
+  function switchViewMode(mode: "staff" | "site") {
+    setViewMode(mode);
+    // Reset filters when switching modes
+    setStaffFilter("");
+    setSelectedStaffIds(new Set());
+    setStaffPickerSearch("");
+    setStaffPickerOpen(false);
+  }
+
+  // --- Staff filter (search or select mode) ---
+  const [staffFilterMode, setStaffFilterMode] = useState<"search" | "select">("search");
+  const [staffFilter, setStaffFilter] = useState("");
+  const [staffPickerOpen, setStaffPickerOpen] = useState(false);
+  const [selectedStaffIds, setSelectedStaffIds] = useState<Set<number>>(new Set());
+  const [staffPickerSearch, setStaffPickerSearch] = useState("");
+
+  function toggleSelectedStaff(id: number) {
+    setSelectedStaffIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearStaffFilter() {
+    setStaffFilter("");
+    setSelectedStaffIds(new Set());
+    setStaffPickerSearch("");
+  }
+
+  // --- Bulk assignment mode ---
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkPanelOpen, setBulkPanelOpen] = useState(false);
+
+  function toggleBulkStaff(id: number) {
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function exitBulkMode() {
+    setBulkMode(false);
+    setBulkSelectedIds(new Set());
+    setBulkPanelOpen(false);
+  }
+
+  // --- Drag-to-select (empty cell → new assignment) ---
+  const [dragState, setDragState] = useState<{
+    staffId: number;
+    startDate: string;
+    currentDate: string;
+  } | null>(null);
+  const isDragging = dragState !== null;
+
+  // --- Drag-to-move (existing card → different staff / different date) ---
+  const [moveDrag, setMoveDrag] = useState<{
+    assignment: Assignment;
+    fromStaffId: number;
+    fromDate: string;
+    currentStaffId: number;
+    currentDate: string;
+    mouseX: number;
+    mouseY: number;
+  } | null>(null);
+  const isMoveDragging = moveDrag !== null;
+
+  // --- Confirm move modal ---
+  const [moveConfirm, setMoveConfirm] = useState<{
+    assignment: Assignment;
+    fromStaffName: string;
+    toStaffId: number;
+    toStaffName: string;
+    dayShift: number; // positive = forward, negative = backward
+  } | null>(null);
+  const [moveLoading, setMoveLoading] = useState(false);
+
+  // Generate dates for the view
+  const allDates: Date[] = [];
+  for (let w = 0; w < weeksToShow; w++) {
+    const dates = getWeekDates(addWeeks(currentDate, w));
+    allDates.push(...dates);
+  }
+  const startDate = formatDateISO(allDates[0]);
+  const endDate = formatDateISO(allDates[allDates.length - 1]);
+
+  const fetchData = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+
+      const params = new URLSearchParams({ startDate, endDate });
+      if (selectedBranches.length > 0) {
+        params.set("branchOfficeIds", selectedBranches.join(","));
+      }
+
+      try {
+        const res = await fetch(`/api/calendar?${params}`);
+        const data = await res.json();
+        setStaffRows(data.staff);
+        setHeadcounts(data.dailyHeadcounts);
+        setHeadcountBySite(data.headcountBySite);
+        setUnassignedAssignments(data.unassignedAssignments || []);
+      } catch (err) {
+        console.error("Failed to fetch calendar data:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [startDate, endDate, selectedBranches]
+  );
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // 現場マスタ全件を取得（site ビューで未配置の現場も表示するため）
+  useEffect(() => {
+    fetch("/api/sites?status=active")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAllSites(
+            data.map((s: { id: number; name: string; siteCode: string; branchOffice: { color: string; name: string } }) => ({
+              id: s.id,
+              name: s.name,
+              siteCode: s.siteCode,
+              branchOffice: s.branchOffice,
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "Escape") {
+        setPanelOpen(false);
+        setContextMenu(null);
+      }
+      if (e.key === "ArrowLeft" && !panelOpen) {
+        e.preventDefault();
+        setCurrentDate((d) => subWeeks(d, 1));
+      }
+      if (e.key === "ArrowRight" && !panelOpen) {
+        e.preventDefault();
+        setCurrentDate((d) => addWeeks(d, 1));
+      }
+      if (e.key === "t" && !panelOpen) {
+        setCurrentDate(new Date());
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [panelOpen]);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    function close() { setContextMenu(null); }
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [contextMenu]);
+
+  function goToday() {
+    setCurrentDate(new Date());
+  }
+
+  function goPrev() {
+    setCurrentDate((d) => subWeeks(d, 1));
+  }
+
+  function goNext() {
+    setCurrentDate((d) => addWeeks(d, 1));
+  }
+
+  function toggleBranch(id: number) {
+    setSelectedBranches((prev) =>
+      prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]
+    );
+  }
+
+  // Build a set of all visible date strings for fast lookup
+  const allDateStrings = allDates.map(formatDateISO);
+
+  function getAssignmentsForDate(assignments: Assignment[], date: string) {
+    return assignments.filter((a) =>
+      a.assignmentDays.some((d) => d.date === date && d.status === "scheduled")
+    );
+  }
+
+  // Determine the position of a date within an assignment's consecutive scheduled run
+  // Returns: 'single' | 'start' | 'middle' | 'end'
+  function getSpanPosition(
+    assignment: Assignment,
+    dateStr: string
+  ): "single" | "start" | "middle" | "end" {
+    const idx = allDateStrings.indexOf(dateStr);
+    const prevDateStr = idx > 0 ? allDateStrings[idx - 1] : null;
+    const nextDateStr =
+      idx < allDateStrings.length - 1 ? allDateStrings[idx + 1] : null;
+
+    const scheduledDates = new Set(
+      assignment.assignmentDays
+        .filter((d) => d.status === "scheduled")
+        .map((d) => d.date)
+    );
+
+    const hasPrev = prevDateStr !== null && scheduledDates.has(prevDateStr);
+    const hasNext = nextDateStr !== null && scheduledDates.has(nextDateStr);
+
+    if (!hasPrev && !hasNext) return "single";
+    if (!hasPrev && hasNext) return "start";
+    if (hasPrev && hasNext) return "middle";
+    return "end";
+  }
+
+  function getHeadcount(date: string): number {
+    return headcounts.find((h) => h.date === date)?.total || 0;
+  }
+
+  function getSiteBreakdown(date: string): HeadcountBySite[] {
+    return headcountBySite.filter((h) => h.date === date);
+  }
+
+  // Check if a staff member has 2+ assignments on a given date
+  function hasDoubleBooking(staffAssignments: Assignment[], dateStr: string): boolean {
+    const dayAssignments = staffAssignments.filter((a) =>
+      a.assignmentDays.some((d) => d.date === dateStr && d.status === "scheduled")
+    );
+    return dayAssignments.length >= 2;
+  }
+
+  // --- Drag-to-select helpers ---
+  function getDragRange(): { from: string; to: string } | null {
+    if (!dragState) return null;
+    const a = dragState.startDate;
+    const b = dragState.currentDate;
+    return a <= b ? { from: a, to: b } : { from: b, to: a };
+  }
+
+  function isCellInDragRange(staffId: number, dateStr: string): boolean {
+    if (!dragState || dragState.staffId !== staffId) return false;
+    const range = getDragRange();
+    if (!range) return false;
+    return dateStr >= range.from && dateStr <= range.to;
+  }
+
+  function handleCellMouseDown(staffId: number, dateStr: string, e: React.MouseEvent) {
+    // Only left click, ignore if panel is open or on assignment cards
+    if (e.button !== 0 || panelOpen) return;
+    e.preventDefault();
+    setDragState({ staffId, startDate: dateStr, currentDate: dateStr });
+  }
+
+  function handleCellMouseEnter(staffId: number, dateStr: string) {
+    // Extend drag selection when mouse enters a cell on the same staff row
+    if (dragState && dragState.staffId === staffId) {
+      setDragState((prev) => prev ? { ...prev, currentDate: dateStr } : null);
+    }
+  }
+
+  function finalizeDrag() {
+    if (!dragState) return;
+    const range = getDragRange();
+    if (!range) { setDragState(null); return; }
+
+    setSelectedStaffId(dragState.staffId);
+    setSelectedSiteId(null);
+    setSelectedDate(range.from);
+    setSelectedAssignment(null);
+    setPanelOpen(true);
+    // Store the end date so the panel can pick it up
+    setDragEndDate(range.to);
+    setDragState(null);
+  }
+
+  // Global mouseup to finalize drag (also handles releasing outside the grid)
+  useEffect(() => {
+    if (!isDragging) return;
+    function handleMouseUp() { finalizeDrag(); }
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  });
+
+  // Separate state for end date to pass to panel
+  const [dragEndDate, setDragEndDate] = useState<string>("");
+
+  // --- Site-view drag-to-select (空セル / 同一現場行のドラッグで期間を確保) ---
+  const [siteDragState, setSiteDragState] = useState<{
+    siteId: number;
+    startDate: string;
+    currentDate: string;
+  } | null>(null);
+  const isSiteDragging = siteDragState !== null;
+
+  function getSiteDragRange(): { from: string; to: string } | null {
+    if (!siteDragState) return null;
+    const a = siteDragState.startDate;
+    const b = siteDragState.currentDate;
+    return a <= b ? { from: a, to: b } : { from: b, to: a };
+  }
+
+  function isSiteCellInDragRange(siteId: number, dateStr: string): boolean {
+    if (!siteDragState || siteDragState.siteId !== siteId) return false;
+    const range = getSiteDragRange();
+    if (!range) return false;
+    return dateStr >= range.from && dateStr <= range.to;
+  }
+
+  function handleSiteCellMouseDown(siteId: number, dateStr: string, e: React.MouseEvent) {
+    if (e.button !== 0 || panelOpen) return;
+    e.preventDefault();
+    setSiteDragState({ siteId, startDate: dateStr, currentDate: dateStr });
+  }
+
+  function handleSiteCellMouseEnter(siteId: number, dateStr: string) {
+    if (siteDragState && siteDragState.siteId === siteId) {
+      setSiteDragState((prev) => prev ? { ...prev, currentDate: dateStr } : null);
+    }
+  }
+
+  function finalizeSiteDrag() {
+    if (!siteDragState) return;
+    const range = getSiteDragRange();
+    if (!range) { setSiteDragState(null); return; }
+    setSelectedStaffId(null);
+    setSelectedSiteId(siteDragState.siteId);
+    setSelectedDate(range.from);
+    setDragEndDate(range.to);
+    setSelectedAssignment(null);
+    setPanelOpen(true);
+    setSiteDragState(null);
+  }
+
+  useEffect(() => {
+    if (!isSiteDragging) return;
+    function handleUp() { finalizeSiteDrag(); }
+    window.addEventListener("mouseup", handleUp);
+    return () => window.removeEventListener("mouseup", handleUp);
+  });
+
+  // --- Move drag handlers ---
+  function handleCardDragStart(assignment: Assignment, staffId: number, dateStr: string, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setMoveDrag({
+      assignment, fromStaffId: staffId, fromDate: dateStr,
+      currentStaffId: staffId, currentDate: dateStr,
+      mouseX: e.clientX, mouseY: e.clientY,
+    });
+  }
+
+  function handleCellMouseEnterForMove(staffId: number, dateStr: string) {
+    if (moveDrag) {
+      setMoveDrag((prev) => prev ? { ...prev, currentStaffId: staffId, currentDate: dateStr } : null);
+    }
+  }
+
+  function calcDayShift(fromDate: string, toDate: string): number {
+    const from = new Date(fromDate + "T00:00:00");
+    const to = new Date(toDate + "T00:00:00");
+    return Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
+  }
+
+  function finalizeMoveDrag() {
+    if (!moveDrag) return;
+    const staffChanged = moveDrag.currentStaffId !== moveDrag.fromStaffId;
+    const dayShift = calcDayShift(moveDrag.fromDate, moveDrag.currentDate);
+
+    if (staffChanged || dayShift !== 0) {
+      const fromStaff = staffRows.find((s) => s.id === moveDrag.fromStaffId);
+      const toStaff = staffRows.find((s) => s.id === moveDrag.currentStaffId);
+      setMoveConfirm({
+        assignment: moveDrag.assignment,
+        fromStaffName: fromStaff?.name || "",
+        toStaffId: moveDrag.currentStaffId,
+        toStaffName: toStaff?.name || "",
+        dayShift,
+      });
+    }
+    setMoveDrag(null);
+  }
+
+  useEffect(() => {
+    if (!isMoveDragging) return;
+    function handleUp() { finalizeMoveDrag(); }
+    function handleMouseMove(e: MouseEvent) {
+      setMoveDrag((prev) => prev ? { ...prev, mouseX: e.clientX, mouseY: e.clientY } : null);
+    }
+    window.addEventListener("mouseup", handleUp);
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => {
+      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener("mousemove", handleMouseMove);
+    };
+  });
+
+  async function confirmMove() {
+    if (!moveConfirm) return;
+    setMoveLoading(true);
+    try {
+      const res = await fetch(`/api/assignments/${moveConfirm.assignment.id}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newStaffId: moveConfirm.toStaffId,
+          dayShift: moveConfirm.dayShift,
+        }),
+      });
+      if (res.ok) {
+        toast.success("配置を移動しました");
+        fetchData(true);
+      } else {
+        toast.error("移動に失敗しました");
+      }
+    } catch {
+      toast.error("エラーが発生しました");
+    } finally {
+      setMoveLoading(false);
+      setMoveConfirm(null);
+    }
+  }
+
+  function handleCellClick(staffId: number, date: string) {
+    // Single click (no drag) is handled by mousedown+mouseup flow
+    // This is a fallback for accessibility
+    if (isDragging) return;
+    setSelectedStaffId(staffId);
+    setSelectedSiteId(null);
+    setSelectedDate(date);
+    setDragEndDate(date);
+    setSelectedAssignment(null);
+    setPanelOpen(true);
+  }
+
+  function handleAssignmentClick(assignment: Assignment, staffId: number | null) {
+    setSelectedAssignment(assignment);
+    setSelectedStaffId(staffId);
+    setSelectedSiteId(null);
+    setSelectedDate("");
+    setDragEndDate("");
+    setPanelOpen(true);
+  }
+
+  function handleContextMenu(
+    e: React.MouseEvent,
+    assignment: Assignment,
+    staffId: number | null,
+    date: string
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      assignment,
+      staffId,
+      date,
+    });
+  }
+
+  async function handleDeleteAssignment(id: number) {
+    try {
+      const res = await fetch(`/api/assignments/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success("配置を削除しました");
+        fetchData(true);
+      }
+    } catch {
+      toast.error("削除に失敗しました");
+    }
+    setContextMenu(null);
+  }
+
+  // Max headcount for heatmap intensity
+  const maxHeadcount = Math.max(...headcounts.map((h) => h.total), 1);
+  const isCompact = weeksToShow >= 4;
+
+  // Filter staff rows by search text or selected IDs
+  const filteredStaffRows = (() => {
+    if (staffFilterMode === "search" && staffFilter.trim()) {
+      const q = staffFilter.trim().toLowerCase();
+      return staffRows.filter((s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.displayName && s.displayName.toLowerCase().includes(q)) ||
+        s.employeeCode.toLowerCase().includes(q)
+      );
+    }
+    if (staffFilterMode === "select" && selectedStaffIds.size > 0) {
+      return staffRows.filter((s) => selectedStaffIds.has(s.id));
+    }
+    return staffRows;
+  })();
+
+  // --- Site-based view: pivot data by job site ---
+  type SiteStaffEntry = {
+    staffId: number | null; // null=未割当
+    staffName: string;
+    branchColor: string;
+    assignmentType: string;
+    assignment: Assignment;
+  };
+  type SiteRow = {
+    id: number;
+    name: string;
+    siteCode: string;
+    branchOffice: { color: string; name: string };
+    staffByDate: Map<string, SiteStaffEntry[]>;
+  };
+
+  const siteRows = useMemo<SiteRow[]>(() => {
+    const siteMap = new Map<number, SiteRow>();
+    // 現場マスタ全件をベースに行を作成（アサインメントが無い現場も表示）
+    for (const site of allSites) {
+      siteMap.set(site.id, {
+        id: site.id,
+        name: site.name,
+        siteCode: site.siteCode,
+        branchOffice: site.branchOffice,
+        staffByDate: new Map(),
+      });
+    }
+    for (const staff of staffRows) {
+      for (const assignment of staff.assignments) {
+        const site = assignment.jobSite;
+        if (!siteMap.has(site.id)) {
+          siteMap.set(site.id, {
+            id: site.id,
+            name: site.name,
+            siteCode: site.siteCode,
+            branchOffice: site.branchOffice,
+            staffByDate: new Map(),
+          });
+        }
+        const row = siteMap.get(site.id)!;
+        for (const day of assignment.assignmentDays) {
+          if (day.status !== "scheduled") continue;
+          if (!row.staffByDate.has(day.date)) row.staffByDate.set(day.date, []);
+          row.staffByDate.get(day.date)!.push({
+            staffId: staff.id,
+            staffName: staff.displayName || staff.name,
+            branchColor: staff.branchOffice.color,
+            assignmentType: assignment.assignmentType,
+            assignment,
+          });
+        }
+      }
+    }
+    // 未割当配置を各サイト行に統合
+    for (const assignment of unassignedAssignments) {
+      const site = assignment.jobSite;
+      if (!siteMap.has(site.id)) {
+        siteMap.set(site.id, {
+          id: site.id,
+          name: site.name,
+          siteCode: site.siteCode,
+          branchOffice: site.branchOffice,
+          staffByDate: new Map(),
+        });
+      }
+      const row = siteMap.get(site.id)!;
+      for (const day of assignment.assignmentDays) {
+        if (day.status !== "scheduled") continue;
+        if (!row.staffByDate.has(day.date)) row.staffByDate.set(day.date, []);
+        row.staffByDate.get(day.date)!.push({
+          staffId: null,
+          staffName: "未割当",
+          branchColor: "#9CA3AF",
+          assignmentType: assignment.assignmentType,
+          assignment,
+        });
+      }
+    }
+    return Array.from(siteMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [staffRows, allSites, unassignedAssignments]);
+
+  // Filter site rows
+  const filteredSiteRows = (() => {
+    if (staffFilterMode === "search" && staffFilter.trim()) {
+      const q = staffFilter.trim().toLowerCase();
+      return siteRows.filter((s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.siteCode.toLowerCase().includes(q)
+      );
+    }
+    if (staffFilterMode === "select" && selectedStaffIds.size > 0) {
+      return siteRows.filter((s) => selectedStaffIds.has(s.id));
+    }
+    return siteRows;
+  })();
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)] md:h-screen relative">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2 md:gap-3 px-2 py-2 md:p-3 border-b bg-card shrink-0">
+        {/* Row 1: Navigation + Week toggle + View mode */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            onClick={goToday}
+            className="h-10 px-4 text-sm font-semibold"
+            title="今日の週に戻る"
+          >
+            今日
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10"
+            onClick={goPrev}
+            aria-label="前の期間へ"
+            title="前の期間へ"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10"
+            onClick={goNext}
+            aria-label="次の期間へ"
+            title="次の期間へ"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </Button>
+          <span className="font-semibold text-sm md:text-base ml-1 tabular-nums whitespace-nowrap">
+            {formatDateRange(allDates[0], allDates[allDates.length - 1])}
+          </span>
+        </div>
+
+        {/* Week toggle */}
+        <div
+          className="flex border rounded-lg overflow-hidden h-10"
+          role="group"
+          aria-label="表示する期間"
+        >
+          {[1, 2, 4].map((w) => (
+            <button
+              key={w}
+              onClick={() => setWeeksToShow(w)}
+              aria-pressed={weeksToShow === w}
+              className={cn(
+                "px-3 md:px-4 text-sm font-medium transition-colors",
+                w > 1 && "border-l",
+                weeksToShow === w
+                  ? "bg-primary text-primary-foreground"
+                  : "hover:bg-muted",
+              )}
+            >
+              {w}週
+            </button>
+          ))}
+        </div>
+
+        {/* View mode toggle: site vs staff */}
+        <div
+          className="flex border rounded-lg overflow-hidden h-10"
+          role="group"
+          aria-label="表示モード"
+        >
+          <button
+            onClick={() => switchViewMode("site")}
+            aria-pressed={viewMode === "site"}
+            className={cn(
+              "px-3 md:px-4 text-sm font-medium transition-colors flex items-center gap-1.5",
+              viewMode === "site"
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-muted",
+            )}
+          >
+            <Building2 className="h-4 w-4" />
+            <span className="hidden sm:inline">現場</span>
+          </button>
+          <button
+            onClick={() => switchViewMode("staff")}
+            aria-pressed={viewMode === "staff"}
+            className={cn(
+              "px-3 md:px-4 text-sm font-medium transition-colors border-l flex items-center gap-1.5",
+              viewMode === "staff"
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-muted",
+            )}
+          >
+            <Users className="h-4 w-4" />
+            <span className="hidden sm:inline">スタッフ</span>
+          </button>
+        </div>
+
+        {/* Bulk mode toggle */}
+        <button
+          onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
+          aria-pressed={bulkMode}
+          className={cn(
+            "h-10 px-3 md:px-4 rounded-lg text-sm font-medium transition-colors border",
+            bulkMode
+              ? "bg-primary text-primary-foreground border-primary"
+              : "border-border hover:bg-muted",
+          )}
+        >
+          一括配置
+        </button>
+
+        {/* Print button with date range popover */}
+        <Popover open={printPopoverOpen} onOpenChange={(open) => {
+          setPrintPopoverOpen(open);
+          if (open) {
+            setPrintStart(startDate);
+            setPrintEnd(endDate);
+          }
+        }}>
+          <PopoverTrigger
+            className="h-10 px-3 md:px-4 rounded-lg text-sm font-medium transition-colors border border-border hover:bg-muted flex items-center gap-1.5"
+          >
+            <Printer className="h-4 w-4" />
+            印刷
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-3 space-y-3" align="start">
+            <p className="text-sm font-semibold">印刷範囲を選んでください</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={printStart}
+                onChange={(e) => setPrintStart(e.target.value)}
+                className="h-10 border rounded-md px-2.5 text-sm w-[150px]"
+                aria-label="開始日"
+              />
+              <span className="text-sm text-muted-foreground">〜</span>
+              <input
+                type="date"
+                value={printEnd}
+                onChange={(e) => setPrintEnd(e.target.value)}
+                className="h-10 border rounded-md px-2.5 text-sm w-[150px]"
+                aria-label="終了日"
+              />
+            </div>
+            <button
+              onClick={() => {
+                setPrintPopoverOpen(false);
+                setShowPrint(true);
+              }}
+              disabled={!printStart || !printEnd || printStart > printEnd}
+              className="w-full h-10 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              プレビュー・印刷
+            </button>
+          </PopoverContent>
+        </Popover>
+
+        {/* Staff filter: search / select toggle */}
+        <div className="flex items-center gap-2">
+          <div
+            className="flex border rounded-lg overflow-hidden h-10 text-sm"
+            role="group"
+            aria-label="スタッフ絞り込み方法"
+          >
+            <button
+              onClick={() => { setStaffFilterMode("search"); setSelectedStaffIds(new Set()); setStaffPickerOpen(false); }}
+              aria-pressed={staffFilterMode === "search"}
+              aria-label="名前で検索"
+              title="名前で検索"
+              className={cn(
+                "px-3 transition-colors flex items-center",
+                staffFilterMode === "search"
+                  ? "bg-primary text-primary-foreground"
+                  : "hover:bg-muted"
+              )}
+            >
+              <Search className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => { setStaffFilterMode("select"); setStaffFilter(""); }}
+              aria-pressed={staffFilterMode === "select"}
+              className={cn(
+                "px-3 transition-colors border-l font-medium",
+                staffFilterMode === "select"
+                  ? "bg-primary text-primary-foreground"
+                  : "hover:bg-muted"
+              )}
+            >
+              選択
+            </button>
+          </div>
+
+          {staffFilterMode === "search" ? (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={staffFilter}
+                onChange={(e) => setStaffFilter(e.target.value)}
+                placeholder={viewMode === "staff" ? "名前・コードで検索" : "現場名・コードで検索"}
+                className="h-10 w-32 sm:w-48 rounded-lg border border-input bg-transparent pl-8 pr-8 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring"
+                aria-label={viewMode === "staff" ? "スタッフを名前・コードで検索" : "現場を名前・コードで検索"}
+              />
+              {staffFilter && (
+                <button
+                  onClick={() => setStaffFilter("")}
+                  aria-label="検索キーワードをクリア"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-muted"
+                >
+                  <X className="h-4 w-4 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="relative">
+              <button
+                onClick={() => setStaffPickerOpen((p) => !p)}
+                className={cn(
+                  "h-10 px-3 md:px-4 rounded-lg border text-sm font-medium flex items-center gap-2 transition-colors",
+                  selectedStaffIds.size > 0
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-input hover:bg-muted"
+                )}
+              >
+                {selectedStaffIds.size > 0
+                  ? `${selectedStaffIds.size}件選択中`
+                  : viewMode === "staff" ? "スタッフを選択" : "現場を選択"}
+                <ChevronRight className={cn("h-3 w-3 transition-transform", staffPickerOpen && "rotate-90")} />
+              </button>
+
+              {staffPickerOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setStaffPickerOpen(false)} />
+                  <div className="absolute top-full right-0 sm:right-auto sm:left-0 mt-1 z-40 w-64 bg-card border rounded-lg shadow-xl overflow-hidden">
+                    {/* Search within picker */}
+                    <div className="p-2 border-b">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <input
+                          type="text"
+                          value={staffPickerSearch}
+                          onChange={(e) => setStaffPickerSearch(e.target.value)}
+                          placeholder="絞り込み..."
+                          className="h-9 w-full rounded-md border border-input bg-transparent pl-8 pr-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring"
+                          autoFocus
+                        />
+                      </div>
+                    </div>
+                    {/* Item list — staff or sites */}
+                    <div className="max-h-64 overflow-auto py-1">
+                      {viewMode === "staff"
+                        ? staffRows
+                            .filter((s) => {
+                              if (!staffPickerSearch.trim()) return true;
+                              const q = staffPickerSearch.trim().toLowerCase();
+                              return s.name.toLowerCase().includes(q) || (s.displayName && s.displayName.toLowerCase().includes(q)) || s.employeeCode.toLowerCase().includes(q);
+                            })
+                            .map((s) => {
+                              const checked = selectedStaffIds.has(s.id);
+                              return (
+                                <button key={s.id} onClick={() => toggleSelectedStaff(s.id)} className={cn("w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-accent transition-colors", checked && "bg-primary/5")}>
+                                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center shrink-0", checked ? "bg-primary border-primary" : "border-muted-foreground/40")}>
+                                    {checked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                                  </div>
+                                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.branchOffice.color }} />
+                                  <span className="truncate">{s.displayName || s.name}</span>
+                                  <span className="text-muted-foreground ml-auto shrink-0">{s.employeeCode}</span>
+                                </button>
+                              );
+                            })
+                        : siteRows
+                            .filter((s) => {
+                              if (!staffPickerSearch.trim()) return true;
+                              const q = staffPickerSearch.trim().toLowerCase();
+                              return s.name.toLowerCase().includes(q) || s.siteCode.toLowerCase().includes(q);
+                            })
+                            .map((s) => {
+                              const checked = selectedStaffIds.has(s.id);
+                              return (
+                                <button key={s.id} onClick={() => toggleSelectedStaff(s.id)} className={cn("w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-accent transition-colors", checked && "bg-primary/5")}>
+                                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center shrink-0", checked ? "bg-primary border-primary" : "border-muted-foreground/40")}>
+                                    {checked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                                  </div>
+                                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.branchOffice.color }} />
+                                  <span className="truncate">{s.name}</span>
+                                  <span className="text-muted-foreground ml-auto shrink-0">{s.siteCode}</span>
+                                </button>
+                              );
+                            })
+                      }
+                    </div>
+                    {/* Footer */}
+                    {selectedStaffIds.size > 0 && (
+                      <div className="p-2 border-t flex items-center justify-between">
+                        <span className="text-[11px] text-muted-foreground">{selectedStaffIds.size}件選択中</span>
+                        <button
+                          onClick={() => setSelectedStaffIds(new Set())}
+                          className="text-[11px] text-primary hover:underline"
+                        >
+                          全解除
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Clear all filter */}
+          {(staffFilter || selectedStaffIds.size > 0) && (
+            <button
+              onClick={clearStaffFilter}
+              className="text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              リセット
+            </button>
+          )}
+        </div>
+
+        {/* Branch filters */}
+        <div className="flex gap-1 md:gap-1.5 flex-wrap ml-auto">
+          {branchOffices.map((bo) => {
+            const active =
+              selectedBranches.length === 0 || selectedBranches.includes(bo.id);
+            return (
+              <button
+                key={bo.id}
+                onClick={() => toggleBranch(bo.id)}
+                className={cn(
+                  "px-2 md:px-3 py-1 rounded-full text-[11px] md:text-xs font-medium transition-all border",
+                  active
+                    ? "text-white border-transparent shadow-sm"
+                    : "text-muted-foreground border-border hover:border-foreground/30"
+                )}
+                style={
+                  active ? { backgroundColor: bo.color, borderColor: bo.color } : {}
+                }
+              >
+                {bo.name}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Refreshing indicator */}
+        {refreshing && (
+          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        )}
+      </div>
+
+      {/* ===== TABLE VIEWS (staff / site) ===== */}
+      <div
+        ref={gridRef}
+        className={cn(
+          "flex-1 overflow-auto transition-opacity duration-200",
+          refreshing && "opacity-60",
+          isDragging && "cursor-crosshair",
+          isMoveDragging && "cursor-grabbing"
+        )}
+      >
+        <div className={isCompact ? "min-w-[900px]" : "min-w-[800px]"}>
+          <table className="w-full border-collapse table-fixed">
+            <colgroup>
+              <col className={isCompact ? "w-[120px]" : "w-[150px]"} />
+              {allDates.map((d) => (
+                <col key={formatDateISO(d)} />
+              ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr>
+                <th className="border-b border-r p-2 text-left text-xs font-medium text-muted-foreground bg-card sticky left-0 z-20">
+                  {viewMode === "staff" ? "スタッフ" : "現場"}
+                </th>
+                {allDates.map((date, dateIndex) => {
+                  const dateStr = formatDateISO(date);
+                  const hc = getHeadcount(dateStr);
+                  const isToday = dateStr === today;
+                  const sunday = isSunday(date);
+                  const weekend = isWeekend(date);
+                  const holiday = getHolidayName(dateStr);
+                  const isRedDay = sunday || !!holiday;
+                  const intensity = hc > 0 ? Math.min(hc / maxHeadcount, 1) : 0;
+                  const isWeekBoundary = isCompact && dateIndex > 0 && dateIndex % 7 === 0;
+                  return (
+                    <th
+                      key={dateStr}
+                      className={cn(
+                        "border-b border-r text-center bg-card relative",
+                        isCompact ? "p-0.5" : "p-1.5",
+                        isRedDay && "bg-red-50",
+                        weekend && !isRedDay && "bg-blue-50",
+                        isToday && "!bg-primary/5",
+                        isWeekBoundary && "border-l-2 border-l-primary/20"
+                      )}
+                    >
+                      {isToday && (
+                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary" />
+                      )}
+                      <div
+                        className={cn(
+                          "font-medium",
+                          isCompact ? "text-[10px]" : "text-xs",
+                          isToday && "text-primary font-bold",
+                          isRedDay && "text-red-500"
+                        )}
+                      >
+                        {formatDateJP(date)}
+                      </div>
+                      {!isCompact && holiday && (
+                        <div className="text-[9px] text-red-400 leading-tight truncate">
+                          {holiday}
+                        </div>
+                      )}
+                      {hc > 0 && (
+                        <Popover>
+                          <PopoverTrigger
+                            className={cn(
+                              "flex items-center justify-center gap-1 cursor-pointer hover:opacity-80 transition-opacity w-full",
+                              isCompact ? "mt-0.5" : "mt-1"
+                            )}
+                          >
+                            {!isCompact && (
+                              <div
+                                className="h-1 rounded-full bg-primary/60 transition-all"
+                                style={{ width: `${Math.max(intensity * 100, 10)}%` }}
+                              />
+                            )}
+                            <span className={cn(
+                              "font-bold tabular-nums text-primary",
+                              isCompact ? "text-[9px]" : "text-xs"
+                            )}>
+                              {hc}名
+                            </span>
+                          </PopoverTrigger>
+                          <PopoverContent side="bottom" className="w-56 p-0">
+                            <div className="px-3 py-2 border-b bg-muted/30">
+                              <div className="font-medium text-xs">
+                                {formatDateJP(date)} の配置内訳
+                              </div>
+                            </div>
+                            <div className="p-2 space-y-1">
+                              {getSiteBreakdown(dateStr).map((site) => (
+                                <div key={site.jobSiteId} className="flex items-center justify-between text-xs px-1 py-0.5">
+                                  <span className="truncate mr-2">{site.siteName}</span>
+                                  <span className="font-bold tabular-nums text-primary shrink-0">{site.count}名</span>
+                                </div>
+                              ))}
+                              <div className="border-t pt-1 mt-1 flex items-center justify-between text-xs px-1 font-medium">
+                                <span>合計</span>
+                                <span className="tabular-nums text-primary">{hc}名</span>
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={allDates.length + 1}
+                    className="text-center p-12"
+                  >
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      <span className="text-sm text-muted-foreground">
+                        読み込み中...
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ) : viewMode === "site" ? (
+                /* ========== SITE VIEW ========== */
+                filteredSiteRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={allDates.length + 1} className="text-center p-12 text-muted-foreground">
+                      {staffFilter ? `「${staffFilter}」に一致する現場が見つかりません` : "現場が見つかりません"}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSiteRows.map((siteRow) => (
+                    <tr key={siteRow.id} className="group/row">
+                      {/* Site name - sticky left */}
+                      <td className={cn(
+                        "border-b border-r bg-card sticky left-0 z-[5] transition-colors",
+                        isCompact ? "p-1 text-xs" : "p-1.5 text-sm",
+                        "group-hover/row:bg-accent/30"
+                      )}>
+                        <div className="flex items-center gap-1.5">
+                          <div
+                            className={cn("rounded-full flex-shrink-0 ring-1 ring-white", isCompact ? "w-2 h-2" : "w-2.5 h-2.5")}
+                            style={{ backgroundColor: siteRow.branchOffice.color }}
+                          />
+                          <div className="min-w-0">
+                            <div className={cn("font-medium truncate leading-tight", isCompact ? "text-[11px]" : "text-[13px]")}>
+                              {siteRow.name}
+                            </div>
+                            {!isCompact && (
+                              <div className="text-[10px] text-muted-foreground leading-tight">
+                                {siteRow.siteCode}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Date cells */}
+                      {allDates.map((date, dateIdx) => {
+                        const dateStr = formatDateISO(date);
+                        const sunday = isSunday(date);
+                        const weekend = isWeekend(date);
+                        const cellHoliday = getHolidayName(dateStr);
+                        const isRedDay = sunday || !!cellHoliday;
+                        const isToday = dateStr === today;
+                        const isCellWeekBoundary = isCompact && dateIdx > 0 && dateIdx % 7 === 0;
+                        const dayStaff = siteRow.staffByDate.get(dateStr) || [];
+
+                        return (
+                          <td
+                            key={dateStr}
+                            className={cn(
+                              "border-b border-r p-0 align-top relative select-none cursor-pointer",
+                              isRedDay && "bg-red-50/40",
+                              weekend && !isRedDay && "bg-blue-50/40",
+                              isToday && "!bg-primary/[0.03]",
+                              "group-hover/row:bg-accent/10 transition-colors",
+                              isCellWeekBoundary && "border-l-2 border-l-primary/20",
+                              isSiteCellInDragRange(siteRow.id, dateStr) && "!bg-primary/15 ring-1 ring-primary/40",
+                              isSiteDragging && "cursor-crosshair",
+                            )}
+                            onMouseDown={(e) => handleSiteCellMouseDown(siteRow.id, dateStr, e)}
+                            onMouseEnter={() => handleSiteCellMouseEnter(siteRow.id, dateStr)}
+                            onClick={() => {
+                              if (isSiteDragging) return;
+                              setSelectedStaffId(null);
+                              setSelectedSiteId(siteRow.id);
+                              setSelectedDate(dateStr);
+                              setDragEndDate(dateStr);
+                              setSelectedAssignment(null);
+                              setPanelOpen(true);
+                            }}
+                          >
+                            <div className={cn("space-y-0.5 py-0.5", isCompact ? "min-h-[24px]" : "min-h-[44px]")}>
+                              {dayStaff.map((entry) => {
+                                const isUnassigned = entry.staffId == null;
+                                return (
+                                  <div
+                                    key={entry.assignment.id}
+                                    className={cn(
+                                      "mx-0.5 rounded cursor-pointer hover:brightness-95 transition-all",
+                                      isCompact ? "px-1 py-0.5" : "px-1.5 py-1",
+                                      isUnassigned && "border border-dashed border-amber-500 bg-amber-50"
+                                    )}
+                                    style={isUnassigned ? undefined : { backgroundColor: entry.branchColor + "20" }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleAssignmentClick(entry.assignment, entry.staffId);
+                                    }}
+                                    onContextMenu={(e) =>
+                                      handleContextMenu(e, entry.assignment, entry.staffId, dateStr)
+                                    }
+                                  >
+                                    {isCompact ? (
+                                      <div className={cn("text-[9px] leading-tight font-medium truncate", isUnassigned && "text-amber-700")}>
+                                        {entry.staffName}
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div className={cn("text-[11px] leading-tight font-medium truncate flex items-center gap-1", isUnassigned && "text-amber-700")}>
+                                          {entry.staffName}
+                                          {entry.assignmentType === "business_trip" && (
+                                            <span className="text-[8px] px-0.5 rounded-sm shrink-0" style={{ backgroundColor: (isUnassigned ? "#F59E0B" : entry.branchColor) + "30" }}>
+                                              出張
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[9px] text-muted-foreground/70 leading-tight">
+                                          {entry.assignment.startTime}〜{entry.assignment.endTime}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                )
+              ) : (
+                /* ========== STAFF VIEW (default) ========== */
+                filteredStaffRows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={allDates.length + 1}
+                    className="text-center p-12 text-muted-foreground"
+                  >
+                    {staffFilter ? `「${staffFilter}」に一致するスタッフが見つかりません` : "スタッフが見つかりません"}
+                  </td>
+                </tr>
+              ) : (
+                filteredStaffRows.map((staff) => {
+                  const isMoveTarget = isMoveDragging && moveDrag!.currentStaffId === staff.id && moveDrag!.fromStaffId !== staff.id;
+                  return (
+                  <tr
+                    key={staff.id}
+                    className={cn("group/row", isMoveTarget && "ring-2 ring-inset ring-primary/40")}
+                  >
+                    {/* Staff name - sticky left */}
+                    <td
+                      className={cn(
+                        "border-b border-r bg-card sticky left-0 z-[5] transition-colors",
+                        isCompact ? "p-1 text-xs" : "p-1.5 text-sm",
+                        !isMoveDragging && "group-hover/row:bg-accent/30",
+                        isMoveTarget && "!bg-primary/10",
+                        bulkMode && "cursor-pointer",
+                        bulkMode && bulkSelectedIds.has(staff.id) && "!bg-primary/10"
+                      )}
+                      onClick={bulkMode ? () => toggleBulkStaff(staff.id) : undefined}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        {bulkMode && (
+                          <div className={cn(
+                            "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+                            bulkSelectedIds.has(staff.id)
+                              ? "bg-primary border-primary"
+                              : "border-muted-foreground/30"
+                          )}>
+                            {bulkSelectedIds.has(staff.id) && (
+                              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        )}
+                        <div
+                          className={cn("rounded-full flex-shrink-0 ring-1 ring-white", isCompact ? "w-2 h-2" : "w-2.5 h-2.5")}
+                          style={{ backgroundColor: staff.branchOffice.color }}
+                        />
+                        <div className="min-w-0">
+                          <div className={cn("font-medium truncate leading-tight", isCompact ? "text-[11px]" : "text-[13px]")}>
+                            {staff.displayName || staff.name}
+                          </div>
+                          {!isCompact && (
+                            <div className="text-[10px] text-muted-foreground leading-tight">
+                              {staff.employeeCode}
+                              <span className="ml-1 px-1 py-px rounded bg-muted text-[9px]">
+                                {staff.insuranceType === "company" ? "社保" : "国保"}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Day cells */}
+                    {allDates.map((date, dateIdx) => {
+                      const dateStr = formatDateISO(date);
+                      const sunday = isSunday(date);
+                      const weekend = isWeekend(date);
+                      const cellHoliday = getHolidayName(dateStr);
+                      const isRedDay = sunday || !!cellHoliday;
+                      const isToday = dateStr === today;
+                      const cellKey = `${staff.id}-${dateStr}`;
+                      const isHovered = hoveredCell === cellKey && !isDragging;
+                      const inDrag = isCellInDragRange(staff.id, dateStr);
+                      const dayAssignments = getAssignmentsForDate(
+                        staff.assignments,
+                        dateStr
+                      );
+                      const isDoubleBooked = dayAssignments.length >= 2;
+                      const isCellWeekBoundary = isCompact && dateIdx > 0 && dateIdx % 7 === 0;
+
+                      return (
+                        <td
+                          key={dateStr}
+                          className={cn(
+                            "border-b border-r p-0 align-top relative select-none",
+                            isRedDay && "bg-red-50/40",
+                            weekend && !isRedDay && "bg-blue-50/40",
+                            isToday && "!bg-primary/[0.03]",
+                            !isDragging && "group-hover/row:bg-accent/10 transition-colors",
+                            inDrag && "!bg-primary/10 ring-1 ring-inset ring-primary/30",
+                            isCellWeekBoundary && "border-l-2 border-l-primary/20",
+                          )}
+                          onMouseEnter={() => {
+                            setHoveredCell(cellKey);
+                            handleCellMouseEnter(staff.id, dateStr);
+                            handleCellMouseEnterForMove(staff.id, dateStr);
+                          }}
+                          onMouseLeave={() => setHoveredCell(null)}
+                          onMouseDown={(e) => handleCellMouseDown(staff.id, dateStr, e)}
+                          onClick={() => {
+                            if (!isDragging) handleCellClick(staff.id, dateStr);
+                          }}
+                        >
+                          {isToday && (
+                            <div className="absolute top-0 bottom-0 left-0 w-px bg-primary/20" />
+                          )}
+                          <div className={cn("space-y-0.5 py-0.5 relative", isCompact ? "min-h-[24px]" : "min-h-[44px]")}>
+                            {isDoubleBooked && (
+                              <div className="absolute top-0.5 right-0.5 z-[2]" title="二重配置">
+                                <AlertTriangle className="h-3 w-3 text-red-500 fill-red-100" />
+                              </div>
+                            )}
+                            {dayAssignments.map((a) => {
+                              const pos = getSpanPosition(a, dateStr);
+                              const color = a.jobSite.branchOffice.color;
+                              const isStart = pos === "start" || pos === "single";
+                              const isEnd = pos === "end" || pos === "single";
+                              const isMiddle = pos === "middle";
+
+                              const isBeingMoved = isMoveDragging && moveDrag!.assignment.id === a.id;
+
+                              return (
+                                <div
+                                  key={a.id}
+                                  className={cn(
+                                    "relative cursor-grab transition-all text-[11px] leading-tight",
+                                    "hover:brightness-95 active:cursor-grabbing",
+                                    isStart && isEnd && "rounded-md mx-0.5",
+                                    isStart && !isEnd && "rounded-l-md ml-0.5 -mr-px",
+                                    isEnd && !isStart && "rounded-r-md mr-0.5 -ml-px",
+                                    isMiddle && "-mx-px",
+                                    isBeingMoved && "opacity-40 ring-2 ring-primary/50 ring-dashed",
+                                  )}
+                                  style={{
+                                    backgroundColor: color + "20",
+                                  }}
+                                  onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    handleCardDragStart(a, staff.id, dateStr, e);
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isMoveDragging) handleAssignmentClick(a, staff.id);
+                                  }}
+                                  onContextMenu={(e) =>
+                                    handleContextMenu(e, a, staff.id, dateStr)
+                                  }
+                                >
+                                  {isCompact ? (
+                                    <div className={cn("px-1 py-0.5", !isStart && "h-[18px]")}>
+                                      {isStart && (
+                                        <div className="font-medium truncate text-[9px] leading-tight">
+                                          {a.jobSite.name}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {isStart && (
+                                        <div className="px-1.5 py-1">
+                                          <div className="font-medium truncate flex items-center gap-1">
+                                            <span className="truncate">
+                                              {a.jobSite.name}
+                                            </span>
+                                            {a.assignmentType === "business_trip" && (
+                                              <span
+                                                className="flex-shrink-0 text-[8px] px-1 py-px rounded-sm font-normal"
+                                                style={{ backgroundColor: color + "30" }}
+                                              >
+                                                出張
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-muted-foreground/70 text-[10px]">
+                                            {a.startTime}-{a.endTime}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {isMiddle && (
+                                        <div className="h-[34px]" />
+                                      )}
+                                      {isEnd && !isStart && (
+                                        <div className="h-[34px]" />
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* Add button - expands on hover, keeps height during drag */}
+                            {!sunday && !isCompact && (
+                              <div
+                                className={cn(
+                                  "overflow-hidden transition-all duration-150 ease-out",
+                                  isHovered || inDrag
+                                    ? "h-8 py-1"
+                                    : "h-0 py-0"
+                                )}
+                              >
+                                {!isDragging && (
+                                  <div className="flex items-center justify-center">
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center transition-colors cursor-pointer">
+                                      <Plus className="h-3.5 w-3.5 text-primary/70" />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  );
+                })
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[100] bg-card border rounded-lg shadow-xl py-1 min-w-[160px] animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent flex items-center gap-2 transition-colors"
+            onClick={() => {
+              handleAssignmentClick(contextMenu.assignment, contextMenu.staffId);
+              setContextMenu(null);
+            }}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+            詳細を編集
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent flex items-center gap-2 transition-colors"
+            onClick={() => {
+              if (viewMode === "site") {
+                // In site view, pre-fill site and let user pick staff
+                setSelectedStaffId(null);
+                setSelectedSiteId(contextMenu.assignment.jobSite.id);
+              } else {
+                // In staff view, pre-fill staff and let user pick site
+                setSelectedStaffId(contextMenu.staffId);
+                setSelectedSiteId(null);
+              }
+              setSelectedDate(contextMenu.date);
+              setSelectedAssignment(null);
+              setPanelOpen(true);
+              setContextMenu(null);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            この日に追加
+          </button>
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent flex items-center gap-2 transition-colors"
+            onClick={() => {
+              const params = new URLSearchParams({
+                jobSiteId: String(contextMenu.assignment.jobSite.id),
+                date: contextMenu.date,
+              });
+              router.push(`/forms/new?${params}`);
+              setContextMenu(null);
+            }}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            出来高確認書を作成
+          </button>
+          <div className="border-t my-1" />
+          <button
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-destructive/10 text-destructive flex items-center gap-2 transition-colors"
+            onClick={() =>
+              handleDeleteAssignment(contextMenu.assignment.id)
+            }
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            削除
+          </button>
+        </div>
+      )}
+
+      {/* Panel Overlay */}
+      {panelOpen && (
+        <div
+          className="fixed inset-0 bg-black/20 z-40 animate-in fade-in duration-200"
+          onClick={() => {
+            setPanelOpen(false);
+            setSelectedAssignment(null);
+          }}
+        />
+      )}
+
+      {/* Assignment Side Panel */}
+      <div
+        className={cn(
+          "fixed top-0 right-0 h-full z-50 transition-transform duration-300 ease-out w-full sm:w-auto",
+          panelOpen ? "translate-x-0" : "translate-x-full"
+        )}
+      >
+        {panelOpen && (
+          <AssignmentPanel
+            staffId={selectedStaffId}
+            preselectedSiteId={selectedSiteId}
+            date={selectedDate}
+            endDate={dragEndDate || selectedDate}
+            assignment={selectedAssignment}
+            onClose={() => {
+              setPanelOpen(false);
+              setSelectedAssignment(null);
+            }}
+            onSaved={() => {
+              setPanelOpen(false);
+              setSelectedAssignment(null);
+              fetchData(true);
+            }}
+          />
+        )}
+      </div>
+
+      {/* Floating ghost while dragging a card */}
+      {moveDrag && (
+        <div
+          className="fixed z-[80] pointer-events-none"
+          style={{
+            left: moveDrag.mouseX,
+            top: moveDrag.mouseY,
+            transform: "translate(-50%, -60%)",
+          }}
+        >
+          <div
+            className="rounded-lg px-3 py-2 text-xs font-medium shadow-xl ring-1 ring-black/10 min-w-[100px] max-w-[180px] truncate"
+            style={{
+              backgroundColor: moveDrag.assignment.jobSite.branchOffice.color + "30",
+              color: moveDrag.assignment.jobSite.branchOffice.color,
+              opacity: 0.9,
+            }}
+          >
+            {moveDrag.assignment.jobSite.name}
+            <div className="text-[10px] opacity-70 mt-0.5">
+              {moveDrag.assignment.startTime}〜{moveDrag.assignment.endTime}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move confirmation modal */}
+      {/* Bulk mode floating bar */}
+      {bulkMode && bulkSelectedIds.size > 0 && !bulkPanelOpen && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-card border rounded-xl shadow-2xl px-4 md:px-5 py-2.5 md:py-3 flex items-center gap-3 md:gap-4 animate-in slide-in-from-bottom-4 fade-in duration-200">
+          <span className="text-sm font-medium tabular-nums">
+            <strong className="text-primary">{bulkSelectedIds.size}名</strong> 選択中
+          </span>
+          <Button
+            size="sm"
+            onClick={() => setBulkPanelOpen(true)}
+          >
+            配置を作成
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setBulkSelectedIds(new Set())}
+          >
+            選択解除
+          </Button>
+        </div>
+      )}
+
+      {/* Bulk Panel Overlay */}
+      {bulkPanelOpen && (
+        <div
+          className="fixed inset-0 bg-black/20 z-40 animate-in fade-in duration-200"
+          onClick={() => setBulkPanelOpen(false)}
+        />
+      )}
+
+      {/* Bulk Assignment Side Panel */}
+      <div
+        className={cn(
+          "fixed top-0 right-0 h-full z-50 transition-transform duration-300 ease-out w-full sm:w-auto",
+          bulkPanelOpen ? "translate-x-0" : "translate-x-full"
+        )}
+      >
+        {bulkPanelOpen && (
+          <BulkAssignmentPanel
+            selectedStaff={staffRows
+              .filter((s) => bulkSelectedIds.has(s.id))
+              .map((s) => ({
+                id: s.id,
+                name: s.displayName || s.name,
+                branchColor: s.branchOffice.color,
+              }))}
+            date={startDate}
+            endDate={startDate}
+            onClose={() => setBulkPanelOpen(false)}
+            onSaved={() => {
+              setBulkPanelOpen(false);
+              exitBulkMode();
+              fetchData(true);
+            }}
+          />
+        )}
+      </div>
+
+      {/* Print view */}
+      {showPrint && (
+        <CalendarPrint
+          viewMode={viewMode === "site" ? "site" : "staff"}
+          initialStart={printStart}
+          initialEnd={printEnd}
+          branchOfficeIds={selectedBranches}
+          onClose={() => setShowPrint(false)}
+        />
+      )}
+
+      {moveConfirm && (() => {
+        const staffChanged = moveConfirm.fromStaffName !== moveConfirm.toStaffName;
+        const ds = moveConfirm.dayShift;
+        const dayLabel = ds > 0 ? `${ds}日後ろへ` : ds < 0 ? `${Math.abs(ds)}日前へ` : "";
+        return (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-[60]" onClick={() => setMoveConfirm(null)} />
+          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-[calc(100%-2rem)] max-w-sm bg-card rounded-xl border shadow-2xl p-5 md:p-6">
+            <h3 className="font-bold text-base mb-4">配置を移動しますか？</h3>
+            <div className="space-y-3 text-sm mb-6">
+              <div className="p-3 rounded-lg bg-muted/50">
+                <div className="text-xs text-muted-foreground mb-1">現場</div>
+                <div className="font-semibold">{moveConfirm.assignment.jobSite.name}</div>
+              </div>
+
+              {/* Staff change */}
+              {staffChanged && (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 p-3 rounded-lg bg-destructive/5 text-center">
+                    <div className="text-xs text-muted-foreground mb-1">移動元</div>
+                    <div className="font-medium">{moveConfirm.fromStaffName}</div>
+                  </div>
+                  <div className="text-muted-foreground text-lg">→</div>
+                  <div className="flex-1 p-3 rounded-lg bg-primary/5 text-center">
+                    <div className="text-xs text-muted-foreground mb-1">移動先</div>
+                    <div className="font-medium text-primary">{moveConfirm.toStaffName}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Date shift */}
+              {ds !== 0 && (
+                <div className="p-3 rounded-lg bg-primary/5 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">日程変更</div>
+                  <div className="font-medium text-primary">{dayLabel}</div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setMoveConfirm(null)}
+                disabled={moveLoading}
+              >
+                キャンセル
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={confirmMove}
+                disabled={moveLoading}
+              >
+                {moveLoading ? "移動中..." : "移動する"}
+              </Button>
+            </div>
+          </div>
+        </>
+        );
+      })()}
+    </div>
+  );
+}

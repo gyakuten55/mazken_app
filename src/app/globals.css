@@ -49,72 +49,72 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.975 0.005 80);
+  --foreground: oklch(0.15 0.01 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.15 0.01 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.15 0.01 260);
+  --primary: oklch(0.55 0.15 250);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --secondary: oklch(0.95 0.02 250);
+  --secondary-foreground: oklch(0.35 0.08 250);
+  --muted: oklch(0.96 0.005 80);
+  --muted-foreground: oklch(0.50 0.02 260);
+  --accent: oklch(0.93 0.03 250);
+  --accent-foreground: oklch(0.30 0.10 250);
+  --destructive: oklch(0.55 0.20 25);
+  --border: oklch(0.90 0.005 80);
+  --input: oklch(0.88 0.005 80);
+  --ring: oklch(0.55 0.15 250);
+  --chart-1: oklch(0.55 0.15 250);
+  --chart-2: oklch(0.65 0.12 200);
+  --chart-3: oklch(0.60 0.10 150);
+  --chart-4: oklch(0.55 0.15 40);
+  --chart-5: oklch(0.50 0.12 300);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.22 0.04 260);
+  --sidebar-foreground: oklch(0.90 0.01 250);
+  --sidebar-primary: oklch(0.65 0.15 250);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.28 0.04 260);
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border: oklch(0.30 0.03 260);
+  --sidebar-ring: oklch(0.55 0.15 250);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --background: oklch(0.16 0.02 260);
+  --foreground: oklch(0.93 0.01 250);
+  --card: oklch(0.20 0.02 260);
+  --card-foreground: oklch(0.93 0.01 250);
+  --popover: oklch(0.20 0.02 260);
+  --popover-foreground: oklch(0.93 0.01 250);
+  --primary: oklch(0.65 0.15 250);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.25 0.03 260);
+  --secondary-foreground: oklch(0.90 0.01 250);
+  --muted: oklch(0.25 0.02 260);
+  --muted-foreground: oklch(0.65 0.02 260);
+  --accent: oklch(0.28 0.03 250);
+  --accent-foreground: oklch(0.93 0 0);
+  --destructive: oklch(0.65 0.20 25);
+  --border: oklch(0.30 0.02 260);
+  --input: oklch(0.28 0.02 260);
+  --ring: oklch(0.65 0.15 250);
+  --chart-1: oklch(0.65 0.15 250);
+  --chart-2: oklch(0.70 0.12 200);
+  --chart-3: oklch(0.65 0.10 150);
+  --chart-4: oklch(0.60 0.15 40);
+  --chart-5: oklch(0.55 0.12 300);
+  --sidebar: oklch(0.14 0.03 260);
+  --sidebar-foreground: oklch(0.90 0.01 250);
+  --sidebar-primary: oklch(0.65 0.15 250);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-accent: oklch(0.22 0.03 260);
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border: oklch(0.25 0.02 260);
+  --sidebar-ring: oklch(0.65 0.15 250);
 }
 
 @layer base {
@@ -126,5 +126,71 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* Form section separator */
+.form-section {
+  @apply border-b border-border pb-6 mb-6;
+}
+.form-section:last-child {
+  @apply border-0 pb-0 mb-0;
+}
+
+@media print {
+  html,
+  body:has(.print-form) {
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  /* Ancestors of .print-form become transparent wrappers so their
+     padding/min-height/flex don't add blank space to the printed page.
+     This works whether .print-form is a body direct child (Portal) or
+     deeply nested inside the dashboard shell. */
+  body:has(.print-form) :has(.print-form):not(body) {
+    display: contents !important;
+  }
+
+  /* Hide every element that is not .print-form, not an ancestor of it,
+     and not a descendant of it. */
+  body:has(.print-form) *:not(.print-form):not(:has(.print-form)):not(.print-form *) {
+    display: none !important;
+  }
+
+  /* Ensure .print-form itself renders in normal flow (no fixed positioning). */
+  body:has(.print-form) .print-form {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    z-index: auto !important;
+  }
+
+  /* Hide onscreen-only UI sections inside the print form. */
+  body:has(.print-form) .no-print,
+  body:has(.print-form) .no-print * {
+    display: none !important;
+  }
+
+  body:has(.print-form) .print-content {
+    position: static !important;
+  }
+
+  /* Keep table rows intact across page breaks. */
+  body:has(.print-form) tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  @page {
+    size: landscape;
+    margin: 5mm;
   }
 }

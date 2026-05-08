@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# SQLite ローカル DB（実データを含むため除外）
+*.db
+*.db-journal
+
+# 打合せ素材・メモ類（ローカル保管）
+/knowledge/
+/4月20日.md
+/修正案1.md
