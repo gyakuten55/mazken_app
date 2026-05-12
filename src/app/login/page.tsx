@@ -54,11 +54,6 @@ export default function LoginPage() {
             スタッフ配置
           </h1>
           <p className="text-white/80 text-xl mt-3">管理システム</p>
-          <div className="mt-10 text-white/50 text-base max-w-xs mx-auto leading-relaxed">
-            スタッフの配置・現場管理を
-            <br />
-            シンプルに、確実に。
-          </div>
         </div>
       </div>
 
