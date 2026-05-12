@@ -122,9 +122,9 @@ export function BulkAssignmentPanel({
   }
 
   return (
-    <div className="w-full sm:max-w-sm h-full bg-card border-l shadow-2xl flex flex-col">
+    <div className="w-full bg-card rounded-xl border shadow-2xl flex flex-col max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-6rem)]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 rounded-t-xl">
         <div>
           <h3 className="font-bold text-base">一括配置</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -136,16 +136,21 @@ export function BulkAssignmentPanel({
         </Button>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      {/* Content — 横長: 左 (スタッフリスト・現場) / 右 (日程・時間・車両) */}
+      <div className="flex-1 overflow-auto p-4 md:p-5">
+        <div className="md:grid md:grid-cols-[minmax(0,360px)_1fr] md:gap-5 space-y-4 md:space-y-0">
+
+        {/* 左カラム */}
+        <div className="space-y-4 min-w-0">
+
         {/* Selected staff */}
         <div className="space-y-1.5">
-          <Label className="text-[11px] text-muted-foreground">選択中のスタッフ</Label>
-          <div className="flex flex-wrap gap-1.5">
+          <Label className="text-[11px] text-muted-foreground">選択中のスタッフ ({selectedStaff.length}名)</Label>
+          <div className="flex flex-wrap gap-1.5 max-h-[160px] overflow-auto p-2 rounded-md border bg-muted/20">
             {selectedStaff.map((s) => (
               <div
                 key={s.id}
-                className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 text-xs"
+                className="flex items-center gap-1 px-2 py-1 rounded-md bg-card border text-xs"
               >
                 <div
                   className="w-1.5 h-1.5 rounded-full"
@@ -169,6 +174,11 @@ export function BulkAssignmentPanel({
             autoFocus
           />
         </div>
+
+        </div>
+
+        {/* 右カラム */}
+        <div className="space-y-4 min-w-0">
 
         {/* Dates */}
         <div className="grid grid-cols-2 gap-2">
@@ -296,10 +306,13 @@ export function BulkAssignmentPanel({
             ))}
           </select>
         </div>
+
+        </div>
+        </div>
       </div>
 
       {/* Footer */}
-      <div className="p-3 border-t bg-muted/20">
+      <div className="p-3 border-t bg-muted/20 rounded-b-xl">
         <Button
           onClick={handleCreate}
           disabled={loading || !form.jobSiteId}

@@ -38,7 +38,8 @@ export default async function VehiclesPage() {
       <div className="px-4 md:px-6 py-6">
         <VehiclesManager
           initialVehicles={payload}
-          canDelete={session.role === "admin" || session.role === "manager"}
+          canDelete={session.role === "admin"}
+          canEdit={session.role === "admin"}
         />
       </div>
     </>

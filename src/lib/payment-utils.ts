@@ -1,4 +1,32 @@
 import { prisma } from "./prisma";
+import { RESIDENCE_DAILY_COST } from "./constants";
+
+// 寮区分から、現場の日給上書き（旧寮/新寮/通い）を選び取るユーティリティ
+function pickJobSiteDailyRateOverride(
+  residenceType: string | null | undefined,
+  site: {
+    dailyRateDorm1: number | null;
+    dailyRateDorm2: number | null;
+    dailyRateCommuter: number | null;
+  } | null,
+): number | null {
+  if (!site) return null;
+  switch (residenceType) {
+    case "dorm1":
+      return site.dailyRateDorm1;
+    case "dorm2":
+      return site.dailyRateDorm2;
+    case "commuter":
+      return site.dailyRateCommuter;
+    default:
+      return null;
+  }
+}
+
+function residenceDailyCost(residenceType: string | null | undefined): number {
+  if (!residenceType) return 0;
+  return RESIDENCE_DAILY_COST[residenceType as keyof typeof RESIDENCE_DAILY_COST] ?? 0;
+}
 
 /**
  * 日計表の金額計算ユーティリティ。
@@ -133,9 +161,18 @@ export async function computeCumulativeBalances(
 /**
  * 指定日の DailyPayment 下書きを AssignmentDay から自動生成する。
  * 既に DailyPayment が存在するスタッフは触らない（ユーザー編集を尊重）。
+ *
+ * 加算ルール:
+ *   - baseFee: AssignmentDay.dailyRateOverride > Assignment.dailyRateOverride
+ *              > 現場別寮区分日給（dailyRateDorm1/2/Commuter） > Staff.dailyRate
+ *   - site*Skill: 配置スタッフ保有資格 ∩ 現場の資格別加算
+ *   - site*Other: 配置単位の AssignmentAllowance.category="other" の合計
+ *   - site*Lift: 0 固定（議事録要件で UI 削除予定。互換のため枠は維持）
+ *   - site*Skill には特殊枠 AssignmentAllowance.category="special" も加算
+ *   - lodgingOffset: 寮区分（旧寮 1950 / 新寮 1350 / 通い 0）× 1 日（既存値があれば加算しない）
  */
 export async function seedDailyPaymentsForDate(date: string): Promise<void> {
-  // その日の scheduled な配置日をすべて取得（保有資格と現場の資格別加算も同時取得）
+  // その日の scheduled な配置日をすべて取得（保有資格と現場の資格別加算、配置単位の手当も同時取得）
   const assignmentDays = await prisma.assignmentDay.findMany({
     where: { date, status: "scheduled" },
     include: {
@@ -145,6 +182,7 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
             select: {
               id: true,
               dailyRate: true,
+              residenceType: true,
               isActive: true,
               staffQualifications: { select: { qualificationId: true } },
             },
@@ -152,9 +190,13 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
           jobSite: {
             select: {
               id: true,
+              dailyRateDorm1: true,
+              dailyRateDorm2: true,
+              dailyRateCommuter: true,
               qualificationBonuses: { select: { qualificationId: true, bonusAmount: true } },
             },
           },
+          allowances: { select: { amount: true, category: true } },
         },
       },
     },
@@ -162,8 +204,9 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
 
   // スタッフごとに配置を集約（最大 2 現場まで）
   type SitePair = {
-    site1?: { jobSiteId: number; baseFee: number; skillBonus: number };
-    site2?: { jobSiteId: number; baseFee: number; skillBonus: number };
+    site1?: { jobSiteId: number; baseFee: number; skillBonus: number; otherBonus: number };
+    site2?: { jobSiteId: number; baseFee: number; skillBonus: number; otherBonus: number };
+    residenceType: string | null;
     extras: number;
   };
   const byStaff = new Map<number, SitePair>();
@@ -174,23 +217,41 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
     if (!ad.assignment.staff.isActive) continue;
     const staffId = ad.assignment.staffId;
     const jobSiteId = ad.assignment.jobSiteId;
+    const residenceType = ad.assignment.staff.residenceType;
+
+    // 現場別寮区分日給を優先順で評価
+    const siteDormRate = pickJobSiteDailyRateOverride(residenceType, ad.assignment.jobSite);
     const baseFee =
       ad.dailyRateOverride ??
       ad.assignment.dailyRateOverride ??
+      siteDormRate ??
       ad.assignment.staff.dailyRate ??
       0;
+
     // 特殊技能料金: スタッフ保有資格 ∩ 現場の資格別加算 の合計
     const heldQualIds = new Set(
       ad.assignment.staff.staffQualifications.map((sq) => sq.qualificationId)
     );
-    const skillBonus = ad.assignment.jobSite.qualificationBonuses
+    const qualSkillBonus = ad.assignment.jobSite.qualificationBonuses
       .filter((b) => heldQualIds.has(b.qualificationId))
       .reduce((sum, b) => sum + b.bonusAmount, 0);
-    const existing = byStaff.get(staffId) ?? { extras: 0 };
+
+    // 配置単位の手当（路内・出張・とび・食事 …）を special / other に振り分け
+    const specialAllowance = ad.assignment.allowances
+      .filter((a) => a.category === "special")
+      .reduce((sum, a) => sum + a.amount, 0);
+    const otherAllowance = ad.assignment.allowances
+      .filter((a) => a.category === "other")
+      .reduce((sum, a) => sum + a.amount, 0);
+
+    const skillBonus = qualSkillBonus + specialAllowance;
+    const otherBonus = otherAllowance;
+
+    const existing = byStaff.get(staffId) ?? { extras: 0, residenceType };
     if (!existing.site1) {
-      existing.site1 = { jobSiteId, baseFee, skillBonus };
+      existing.site1 = { jobSiteId, baseFee, skillBonus, otherBonus };
     } else if (!existing.site2) {
-      existing.site2 = { jobSiteId, baseFee, skillBonus };
+      existing.site2 = { jobSiteId, baseFee, skillBonus, otherBonus };
     } else {
       existing.extras += 1;
     }
@@ -213,25 +274,32 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
     site1Id: number | null;
     site1BaseFee: number;
     site1Skill: number;
+    site1Other: number;
     site2Id: number | null;
     site2BaseFee: number;
     site2Skill: number;
+    site2Other: number;
     safetyOffset: number;
+    lodgingOffset: number;
     notes: string | null;
   }> = [];
 
   for (const [staffId, pair] of byStaff) {
     if (existingStaffIds.has(staffId)) continue;
+    const lodging = residenceDailyCost(pair.residenceType);
     toCreate.push({
       date,
       staffId,
       site1Id: pair.site1?.jobSiteId ?? null,
       site1BaseFee: pair.site1?.baseFee ?? 0,
       site1Skill: pair.site1?.skillBonus ?? 0,
+      site1Other: pair.site1?.otherBonus ?? 0,
       site2Id: pair.site2?.jobSiteId ?? null,
       site2BaseFee: pair.site2?.baseFee ?? 0,
       site2Skill: pair.site2?.skillBonus ?? 0,
+      site2Other: pair.site2?.otherBonus ?? 0,
       safetyOffset: DEFAULT_SAFETY_OFFSET,
+      lodgingOffset: lodging,
       notes: pair.extras > 0 ? `3件以上の配置あり（+${pair.extras}件は未反映）` : null,
     });
   }

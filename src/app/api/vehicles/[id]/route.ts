@@ -8,7 +8,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 車両編集は admin のみ（議事録: ユーザー1=officeは編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;
@@ -59,7 +60,8 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireRole("admin", "manager");
+  // 車両削除は admin のみ
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

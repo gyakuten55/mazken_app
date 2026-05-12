@@ -36,10 +36,12 @@ export function StaffTable({
   staff,
   branchOffices,
   qualifications: _qualifications,
+  readOnly = false,
 }: {
   staff: StaffWithRelations[];
   branchOffices: BranchOffice[];
   qualifications: Qualification[];
+  readOnly?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState<number | null>(null);
@@ -170,7 +172,7 @@ export function StaffTable({
                 </TableCell>
                 <TableCell>
                   <Link href={`/staff/${s.id}`}>
-                    <Button variant="outline" size="sm">編集</Button>
+                    <Button variant="outline" size="sm">{readOnly ? "詳細" : "編集"}</Button>
                   </Link>
                 </TableCell>
               </TableRow>

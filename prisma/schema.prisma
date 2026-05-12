@@ -89,14 +89,39 @@ model StaffQualification {
   @@map("staff_qualifications")
 }
 
+// ===== 得意先（取引先）マスタ =====
+// 1 得意先 → N 現場 の階層を表現するマスタ。
+// 議事録 L131: 「得意先を管理するマスター…そいつの小要素に現場を持たせる」
+model Customer {
+  id        Int       @id @default(autoincrement())
+  code      String?   @unique // 得意先コード（任意）
+  name      String
+  address   String?
+  phone     String?
+  notes     String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  jobSites  JobSite[]
+
+  @@index([name])
+  @@map("customers")
+}
+
 // ===== 現場 =====
 model JobSite {
   id               Int      @id @default(autoincrement())
   siteCode         String   @unique // 現場コード
   name             String
-  clientName       String?  // 元請け会社名
+  // 得意先マスタへの参照（必須化候補だが、移行のため当面は nullable で運用）
+  customerId       Int?
+  // 旧 clientCode / clientName は移行期間として残置。新規入力は Customer 経由で行う。
+  clientCode       String?  // [DEPRECATED] customer.code へ移行
+  clientName       String?  // [DEPRECATED] customer.name へ移行
   branchOfficeId   Int
   address          String?
+  mapUrl           String?  // GoogleMap URL
   contactName1     String?
   contactTel1      String?
   contactName2     String?
@@ -104,6 +129,13 @@ model JobSite {
   contactName3     String?
   contactTel3      String?
   transportation   String?  // 交通手段
+  belongings       String?  // 持ち物（自由記述、配置作成時に prefill）
+  siteMemo         String?  // 現場メモ
+  genDoMen         String?  // 原動面（ゲンドウメン）
+  workerPricingPolicy String @default("possible") // "possible"=可,"impossible"=不可,"case_by_case"=都度相談
+  dailyRateDorm1   Int?     // 旧寮居住者向けの現場別日給
+  dailyRateDorm2   Int?     // 新寮居住者向けの現場別日給
+  dailyRateCommuter Int?    // 通い者向けの現場別日給
   startDate        String?  // YYYY-MM-DD
   endDate          String?
   status           String   @default("active") // "active","completed","cancelled"
@@ -115,6 +147,7 @@ model JobSite {
   updatedAt        DateTime @updatedAt
 
   branchOffice         BranchOffice          @relation(fields: [branchOfficeId], references: [id])
+  customer             Customer?             @relation(fields: [customerId], references: [id])
   assignments          Assignment[]
   workCompletionForms  WorkCompletionForm[]
   dailyPaymentsAsSite1 DailyPayment[]        @relation("DailyPaymentSite1")
@@ -122,6 +155,8 @@ model JobSite {
   qualificationBonuses JobSiteQualificationBonus[]
 
   @@index([branchOfficeId])
+  @@index([customerId])
+  @@index([clientCode])
   @@map("job_sites")
 }
 
@@ -131,6 +166,7 @@ model JobSiteQualificationBonus {
   jobSiteId       Int
   qualificationId Int
   bonusAmount     Int   @default(0) // 1日あたりの加算額（円）
+  isRequired      Boolean @default(false) // この現場で必須資格扱いか（true なら配置時に警告）
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -172,6 +208,10 @@ model Assignment {
   startTime         String   @default("08:00")
   endTime           String   @default("18:00")
   dailyRateOverride Int?
+  belongings        String?  // 持ち物（配置単位で上書き）
+  contactName      String?  // 担当者（マスタから prefill 可能、ただしマスタ書き戻しはしない）
+  contactTel       String?
+  transportation   String?  // 交通手段（マスタから prefill、配置単位で上書き）
   notes             String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -180,12 +220,29 @@ model Assignment {
   jobSite        JobSite         @relation(fields: [jobSiteId], references: [id])
   vehicle        Vehicle?        @relation(fields: [vehicleId], references: [id])
   assignmentDays AssignmentDay[]
+  allowances     AssignmentAllowance[]
 
   @@index([staffId])
   @@index([jobSiteId])
   @@index([vehicleId])
   @@index([startDate, endDate])
   @@map("assignments")
+}
+
+// ===== 配置単位の加算手当（路内・出張・食事・とび 他、自由名称＋金額）=====
+model AssignmentAllowance {
+  id           Int    @id @default(autoincrement())
+  assignmentId Int
+  name         String // 例: "路内手当", "出張手当", "とび手当", "食事手当", 自由入力
+  amount       Int    @default(0) // 1日あたりの加算額（円）
+  category     String @default("special") // "special"=特殊枠, "other"=他枠（日経表の集計先）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+  @@map("assignment_allowances")
 }
 
 // ===== 配置日個別管理（痛点#2解決の核心）=====

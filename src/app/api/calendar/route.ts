@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
             },
             orderBy: { date: "asc" },
           },
+          allowances: { orderBy: { id: "asc" } },
         },
       },
     },
@@ -58,6 +59,7 @@ export async function GET(request: NextRequest) {
       dailyHeadcounts: [],
       headcountBySite: [],
       unassignedAssignments: [],
+      sitesInRange: [],
     });
   }
 
@@ -75,11 +77,12 @@ export async function GET(request: NextRequest) {
         where: { date: { gte: startDate, lte: endDate } },
         orderBy: { date: "asc" },
       },
+      allowances: { orderBy: { id: "asc" } },
     },
     orderBy: { startDate: "asc" },
   });
 
-  // Calculate daily headcounts
+  // Calculate daily headcounts（事前断り・キャンセルは合計から除外）
   const headcounts = await prisma.assignmentDay.groupBy({
     by: ["date"],
     where: {
@@ -89,20 +92,70 @@ export async function GET(request: NextRequest) {
     _count: { id: true },
   });
 
-  // Headcount by site per day
-  const headcountBySite = await prisma.$queryRawUnsafe<
-    { date: string; jobSiteId: number; siteName: string; count: number }[]
-  >(
-    `SELECT ad.date, a."jobSiteId" as jobSiteId, js.name as siteName, COUNT(*) as count
-     FROM assignment_days ad
-     JOIN assignments a ON ad."assignmentId" = a.id
-     JOIN job_sites js ON a."jobSiteId" = js.id
-     WHERE ad.date >= ? AND ad.date <= ? AND ad.status = 'scheduled'
-     GROUP BY ad.date, a."jobSiteId"
-     ORDER BY ad.date, count DESC`,
-    startDate,
-    endDate
-  );
+  // Headcount by site per day（scheduled / pre_declined を区別して集計）
+  const headcountRaw = await prisma.assignmentDay.findMany({
+    where: {
+      date: { gte: startDate, lte: endDate },
+      status: { in: ["scheduled", "pre_declined"] },
+    },
+    select: {
+      date: true,
+      status: true,
+      assignment: {
+        select: {
+          jobSiteId: true,
+          jobSite: { select: { name: true } },
+        },
+      },
+    },
+  });
+  type SiteAggKey = string; // `${date}|${jobSiteId}`
+  const aggMap = new Map<
+    SiteAggKey,
+    { date: string; jobSiteId: number; siteName: string; scheduledCount: number; preDeclinedCount: number }
+  >();
+  for (const r of headcountRaw) {
+    const key = `${r.date}|${r.assignment.jobSiteId}`;
+    const existing = aggMap.get(key) ?? {
+      date: r.date,
+      jobSiteId: r.assignment.jobSiteId,
+      siteName: r.assignment.jobSite.name,
+      scheduledCount: 0,
+      preDeclinedCount: 0,
+    };
+    if (r.status === "scheduled") existing.scheduledCount += 1;
+    else if (r.status === "pre_declined") existing.preDeclinedCount += 1;
+    aggMap.set(key, existing);
+  }
+  const headcountBySite = Array.from(aggMap.values()).map((agg) => ({
+    date: agg.date,
+    jobSiteId: agg.jobSiteId,
+    siteName: agg.siteName,
+    count: agg.scheduledCount,
+    preDeclinedCount: agg.preDeclinedCount,
+  }));
+
+  // 期間内に配置がある現場の必要人数 / 階層情報を返す（カレンダー表示で利用）
+  const siteIdsInRange = Array.from(new Set(headcountBySite.map((h) => h.jobSiteId)));
+  const sitesInRange =
+    siteIdsInRange.length > 0
+      ? await prisma.jobSite.findMany({
+          where: { id: { in: siteIdsInRange } },
+          select: {
+            id: true,
+            siteCode: true,
+            name: true,
+            clientCode: true,
+            clientName: true,
+            requiredHeadcount: true,
+            workCategory: true,
+            belongings: true,
+            siteMemo: true,
+            genDoMen: true,
+            mapUrl: true,
+          },
+        })
+      : [];
 
   return NextResponse.json({
     staff,
@@ -110,10 +163,8 @@ export async function GET(request: NextRequest) {
       date: h.date,
       total: h._count.id,
     })),
-    headcountBySite: headcountBySite.map((h) => ({
-      ...h,
-      count: Number(h.count),
-    })),
+    headcountBySite,
     unassignedAssignments,
+    sitesInRange,
   });
 }

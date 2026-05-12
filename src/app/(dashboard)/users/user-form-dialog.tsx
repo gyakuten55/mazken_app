@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { USER_ROLES } from "@/lib/constants";
+import { USER_ROLES, SELECTABLE_USER_ROLES } from "@/lib/constants";
 
 export type Branch = {
   id: number;
@@ -37,7 +37,10 @@ export type UserFormValues = {
   staffId: string;
 };
 
-const ROLE_OPTIONS = Object.entries(USER_ROLES) as [string, string][];
+// 5/20 デモ向け: 3 ロール（admin / office / staff）のみ選択可
+const ROLE_OPTIONS = SELECTABLE_USER_ROLES.map(
+  (key) => [key, USER_ROLES[key]] as [string, string],
+);
 
 const EMPTY: UserFormValues = {
   username: "",

@@ -43,7 +43,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireRole("admin", "manager", "office");
+  // スタッフ作成は admin のみ（議事録: ユーザー1=officeはスタッフ一覧の作成・編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const body = await request.json();

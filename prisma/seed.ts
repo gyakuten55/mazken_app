@@ -83,17 +83,47 @@ async function main() {
     staffRecords.push(staff);
   }
 
-  // ===== 現場 (8件) =====
+  // ===== 得意先マスタ =====
+  const customers = {
+    sef: await prisma.customer.create({
+      data: { code: "C001", name: "スリーエフコーポレーション", address: "大阪府大阪市北区梅田3丁目1-3" },
+    }),
+    daishin: await prisma.customer.create({
+      data: { code: "C002", name: "ダイシン物流", address: "大阪府堺市堺区南花田口町2丁3-20" },
+    }),
+    sakura: await prisma.customer.create({
+      data: { code: "C003", name: "さくら美創", address: "滋賀県高島市今津町今津1559" },
+    }),
+    shuei: await prisma.customer.create({
+      data: { code: "C004", name: "シューエイ" },
+    }),
+    higashinana: await prisma.customer.create({
+      data: { code: "C005", name: "東七建設", address: "京都府京都市下京区四条通烏丸東入長刀鉾町20" },
+    }),
+    toyotsu: await prisma.customer.create({
+      data: { code: "C006", name: "豊津建設" },
+    }),
+    hieiDenki: await prisma.customer.create({
+      data: { code: "C007", name: "比叡電気工業" },
+    }),
+  };
+
+  // ===== 現場 (8件) — customerId で得意先マスタへ紐付け =====
+  // clientCode/clientName は API 経由作成時は自動同期されるが、seed では明示的に設定
   const sites = await Promise.all([
     prisma.jobSite.create({
       data: {
         siteCode: "S001",
-        name: "スリーエフコーポレーション",
-        clientName: "スリーエフコーポレーション",
+        customerId: customers.sef.id,
+        clientCode: customers.sef.code,
+        name: "スリーエフ 梅田案件",
+        clientName: customers.sef.name,
         branchOfficeId: hq.id,
-        address: "大阪府大阪市北区梅田1-2-3",
+        address: "大阪府大阪市北区梅田3丁目1-3",
         contactName1: "岡村",
         contactTel1: "06-1234-5678",
+        belongings: "ヘルメット、安全靴、手袋",
+        requiredHeadcount: 3,
         startDate: "2026-03-01",
         endDate: "2026-06-30",
         status: "active",
@@ -102,12 +132,15 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S002",
+        customerId: customers.daishin.id,
+        clientCode: customers.daishin.code,
         name: "ダイシン物流 ネカムラ",
-        clientName: "ダイシン物流",
+        clientName: customers.daishin.name,
         branchOfficeId: hq.id,
-        address: "大阪府堺市堺区南花田町3-4-5",
+        address: "大阪府堺市堺区南花田口町2丁3-20",
         contactName1: "中村",
         contactTel1: "072-2345-6789",
+        requiredHeadcount: 5,
         startDate: "2026-03-10",
         endDate: "2026-05-31",
         status: "active",
@@ -116,10 +149,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S003",
-        name: "さくら美創",
-        clientName: "さくら美創",
+        customerId: customers.sakura.id,
+        clientCode: customers.sakura.code,
+        name: "さくら美創 今津工場",
+        clientName: customers.sakura.name,
         branchOfficeId: takase.id,
-        address: "滋賀県高島市今津町1-2-3",
+        address: "滋賀県高島市今津町今津1559",
         contactName1: "佐々木",
         contactTel1: "0740-12-3456",
         startDate: "2026-03-15",
@@ -130,10 +165,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S004",
+        customerId: customers.shuei.id,
+        clientCode: customers.shuei.code,
         name: "シューエイ 名神",
-        clientName: "シューエイ",
+        clientName: customers.shuei.name,
         branchOfficeId: kusatsu.id,
-        address: "滋賀県草津市野路町4-5-6",
+        address: "滋賀県草津市野路東1丁目1-1",
         contactName1: "田村",
         contactTel1: "077-345-6789",
         startDate: "2026-04-01",
@@ -144,10 +181,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S005",
+        customerId: customers.daishin.id,
+        clientCode: customers.daishin.code,
         name: "ダイシン物流 横取り",
-        clientName: "ダイシン物流",
+        clientName: customers.daishin.name,
         branchOfficeId: hq.id,
-        address: "大阪府東大阪市長堂2-3-4",
+        address: "大阪府東大阪市長堂1丁目8-37",
         contactName1: "横山",
         contactTel1: "06-9876-5432",
         startDate: "2026-03-20",
@@ -158,10 +197,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S006",
+        customerId: customers.higashinana.id,
+        clientCode: customers.higashinana.code,
         name: "東七建設 下京区",
-        clientName: "東七建設",
+        clientName: customers.higashinana.name,
         branchOfficeId: kyoto.id,
-        address: "京都府京都市下京区四条通1-2",
+        address: "京都府京都市下京区四条通烏丸東入長刀鉾町20",
         contactName1: "東",
         contactTel1: "075-123-4567",
         startDate: "2026-03-01",
@@ -172,10 +213,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S007",
+        customerId: customers.toyotsu.id,
+        clientCode: customers.toyotsu.code,
         name: "豊津建設 中ノ島",
-        clientName: "豊津建設",
+        clientName: customers.toyotsu.name,
         branchOfficeId: takase.id,
-        address: "滋賀県高島市マキノ町5-6-7",
+        address: "滋賀県高島市マキノ町中庄147",
         contactName1: "豊田",
         contactTel1: "0740-56-7890",
         startDate: "2026-04-01",
@@ -186,10 +229,12 @@ async function main() {
     prisma.jobSite.create({
       data: {
         siteCode: "S008",
-        name: "比叡電気工業",
-        clientName: "比叡電気工業",
+        customerId: customers.hieiDenki.id,
+        clientCode: customers.hieiDenki.code,
+        name: "比叡電気工業 瀬田",
+        clientName: customers.hieiDenki.name,
         branchOfficeId: kusatsu.id,
-        address: "滋賀県大津市瀬田3-4-5",
+        address: "滋賀県大津市瀬田1丁目1-1",
         contactName1: "比叡",
         contactTel1: "077-567-8901",
         startDate: "2026-03-15",

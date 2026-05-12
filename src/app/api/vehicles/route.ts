@@ -21,7 +21,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 車両登録は admin のみ（議事録: ユーザー1=officeは編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const body = await request.json();

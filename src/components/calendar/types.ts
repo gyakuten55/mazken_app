@@ -1,7 +1,14 @@
 export type AssignmentDay = {
   id: number;
   date: string;
-  status: string;
+  status: string; // "scheduled" | "cancelled" | "completed" | "pre_declined"
+};
+
+export type AssignmentAllowance = {
+  id?: number;
+  name: string;
+  amount: number;
+  category: "special" | "other";
 };
 
 export type Assignment = {
@@ -15,14 +22,25 @@ export type Assignment = {
   startTime: string;
   endTime: string;
   dailyRateOverride?: number | null;
+  belongings?: string | null;
+  contactName?: string | null;
+  contactTel?: string | null;
+  transportation?: string | null;
   notes: string | null;
   jobSite: {
     id: number;
     name: string;
     siteCode: string;
+    clientCode?: string | null;
     clientName?: string | null;
+    address?: string | null;
     notes?: string | null;
     workCategory?: string;
+    requiredHeadcount?: number | null;
+    belongings?: string | null;
+    siteMemo?: string | null;
+    genDoMen?: string | null;
+    mapUrl?: string | null;
     branchOffice: { color: string; name: string };
   };
   vehicle?: {
@@ -31,6 +49,7 @@ export type Assignment = {
     name: string | null;
   } | null;
   assignmentDays: AssignmentDay[];
+  allowances?: AssignmentAllowance[];
 };
 
 export type StaffRow = {

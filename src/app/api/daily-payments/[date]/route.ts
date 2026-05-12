@@ -78,12 +78,12 @@ export async function GET(
 
   const staffIds = staff.map((s) => s.id);
 
-  // 対象日の DailyPayment 一覧
+  // 対象日の DailyPayment 一覧（得意先コード／得意先名／現場コード／現場名 を返す）
   const dailyPayments = await prisma.dailyPayment.findMany({
     where: { date, staffId: { in: staffIds } },
     include: {
-      site1: { select: { id: true, siteCode: true, name: true, clientName: true } },
-      site2: { select: { id: true, siteCode: true, name: true, clientName: true } },
+      site1: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true } },
+      site2: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true } },
     },
   });
   const dpByStaff = new Map(dailyPayments.map((dp) => [dp.staffId, dp]));
@@ -158,7 +158,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ date: string }> },
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 日計表の編集（お金関連）は admin のみ。
+  // office（ユーザー1）は閲覧・印刷は可能だが編集不可。
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { date } = await params;

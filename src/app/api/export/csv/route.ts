@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireRole, isAuthError } from "@/lib/api-auth";
 import { csvExportSchema } from "@/lib/validations";
 import { INSURANCE_TYPES, ASSIGNMENT_TYPES, type InsuranceType, type AssignmentType } from "@/lib/constants";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth();
+  // CSV はお金関連の生データを含むため admin のみ
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const body = await request.json();

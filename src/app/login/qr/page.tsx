@@ -34,8 +34,7 @@ export default async function QrLoginPage({ searchParams }: PageProps) {
     );
   }
 
-  if (user.role === "staff") {
-    redirect("/signage");
-  }
+  // staff も含めて全ロールはカレンダーへ。staff ロールは API/UI 側で
+  // 自身の予定のみ閲覧可能になっているため、専用画面は不要。
   redirect("/calendar");
 }

@@ -14,9 +14,9 @@ import {
   PanelLeftOpen,
   ShieldCheck,
   ScrollText,
-  MonitorPlay,
   Truck,
   Receipt,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,23 +29,34 @@ const iconMap = {
   Printer,
   ShieldCheck,
   ScrollText,
-  MonitorPlay,
   Truck,
   Receipt,
+  Briefcase,
 } as const;
 
-const allNavItems = [
-  { href: "/calendar", label: "カレンダー", icon: "Calendar" as const, staffVisible: true, adminOnly: false },
-  { href: "/staff", label: "スタッフ", icon: "Users" as const, staffVisible: false, adminOnly: false },
-  { href: "/sites", label: "現場", icon: "Building2" as const, staffVisible: false, adminOnly: false },
-  { href: "/vehicles", label: "車両管理", icon: "Truck" as const, staffVisible: false, adminOnly: false },
-  { href: "/forms", label: "出来高確認書", icon: "FileText" as const, staffVisible: true, adminOnly: false },
-  { href: "/tally", label: "日計表", icon: "Receipt" as const, staffVisible: false, adminOnly: false },
-  { href: "/export", label: "CSV出力", icon: "Download" as const, staffVisible: false, adminOnly: false },
-  { href: "/print/daily", label: "印刷", icon: "Printer" as const, staffVisible: false, adminOnly: false },
-  { href: "/signage", label: "サイネージ", icon: "MonitorPlay" as const, staffVisible: false, adminOnly: false, external: true },
-  { href: "/users", label: "ユーザー管理", icon: "ShieldCheck" as const, staffVisible: false, adminOnly: true },
-  { href: "/audit-logs", label: "監査ログ", icon: "ScrollText" as const, staffVisible: false, adminOnly: true },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: keyof typeof iconMap;
+  staffVisible: boolean;
+  adminOnly: boolean;
+  // office (=ユーザー1) で非表示にしたい項目（出来高・CSV）
+  officeHidden?: boolean;
+  external?: boolean;
+};
+
+const allNavItems: NavItem[] = [
+  { href: "/calendar", label: "カレンダー", icon: "Calendar", staffVisible: true, adminOnly: false },
+  { href: "/staff", label: "スタッフ", icon: "Users", staffVisible: false, adminOnly: false },
+  { href: "/customers", label: "得意先", icon: "Briefcase", staffVisible: false, adminOnly: false },
+  { href: "/sites", label: "現場", icon: "Building2", staffVisible: false, adminOnly: false },
+  { href: "/vehicles", label: "車両管理", icon: "Truck", staffVisible: false, adminOnly: false },
+  { href: "/forms", label: "出来高確認書", icon: "FileText", staffVisible: true, adminOnly: false, officeHidden: true },
+  { href: "/tally", label: "日計表", icon: "Receipt", staffVisible: false, adminOnly: false },
+  { href: "/print/work-report", label: "作業日報", icon: "Printer", staffVisible: false, adminOnly: false },
+  { href: "/export", label: "CSV出力", icon: "Download", staffVisible: false, adminOnly: false, officeHidden: true },
+  { href: "/users", label: "ユーザー管理", icon: "ShieldCheck", staffVisible: false, adminOnly: true },
+  { href: "/audit-logs", label: "監査ログ", icon: "ScrollText", staffVisible: false, adminOnly: true },
 ];
 
 export function Sidebar({
@@ -114,6 +125,8 @@ export function Sidebar({
             .filter((item) => {
               if (userRole === "staff") return item.staffVisible;
               if (item.adminOnly) return userRole === "admin";
+              // office = ユーザー1（お金関連以外OK）。officeHidden の項目は隠す
+              if (userRole === "office" && item.officeHidden) return false;
               return true;
             })
             .map((item) => {

@@ -77,9 +77,11 @@ function inspectionBadge(days: number | null) {
 export function VehiclesManager({
   initialVehicles,
   canDelete,
+  canEdit = canDelete,
 }: {
   initialVehicles: Vehicle[];
   canDelete: boolean;
+  canEdit?: boolean;
 }) {
   const [vehicles, setVehicles] = useState<Vehicle[]>(initialVehicles);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -174,10 +176,14 @@ export function VehiclesManager({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" />
-          車両追加
-        </Button>
+        {canEdit ? (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            車両追加
+          </Button>
+        ) : (
+          <span className="text-xs text-muted-foreground">閲覧のみ</span>
+        )}
       </div>
 
       <div className="rounded-lg border bg-card">
@@ -218,24 +224,30 @@ export function VehiclesManager({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEdit(v)}
-                      className="h-8"
-                    >
-                      <Pencil className="h-3.5 w-3.5 mr-1" />
-                      編集
-                    </Button>
-                    {canDelete && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(v)}
-                        className={cn("h-8 text-red-600 hover:text-red-700 hover:bg-red-50")}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                    {canEdit ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEdit(v)}
+                          className="h-8"
+                        >
+                          <Pencil className="h-3.5 w-3.5 mr-1" />
+                          編集
+                        </Button>
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(v)}
+                            className={cn("h-8 text-red-600 hover:text-red-700 hover:bg-red-50")}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </div>
                 </TableCell>

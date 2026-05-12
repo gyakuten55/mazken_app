@@ -13,21 +13,23 @@ import {
   Printer,
   LogOut,
   Truck,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 
 const allBottomNavItems = [
-  { href: "/calendar", label: "カレンダー", icon: Calendar, staffVisible: true },
-  { href: "/staff", label: "スタッフ", icon: Users, staffVisible: false },
-  { href: "/sites", label: "現場", icon: Building2, staffVisible: false },
-  { href: "/forms", label: "出来高", icon: FileText, staffVisible: true },
+  { href: "/calendar", label: "カレンダー", icon: Calendar, staffVisible: true, officeHidden: false },
+  { href: "/staff", label: "スタッフ", icon: Users, staffVisible: false, officeHidden: false },
+  { href: "/sites", label: "現場", icon: Building2, staffVisible: false, officeHidden: false },
+  { href: "/forms", label: "出来高", icon: FileText, staffVisible: true, officeHidden: true },
 ];
 
 const moreMenuItems = [
-  { href: "/vehicles", label: "車両管理", icon: Truck },
-  { href: "/export", label: "CSV出力", icon: Download },
-  { href: "/print/daily", label: "印刷", icon: Printer },
+  { href: "/customers", label: "得意先", icon: Briefcase, officeHidden: false },
+  { href: "/vehicles", label: "車両管理", icon: Truck, officeHidden: false },
+  { href: "/print/work-report", label: "作業日報", icon: Printer, officeHidden: false },
+  { href: "/export", label: "CSV出力", icon: Download, officeHidden: true },
 ];
 
 export function MobileNav({ userRole }: { userRole: string }) {
@@ -43,10 +45,19 @@ export function MobileNav({ userRole }: { userRole: string }) {
   };
 
   const isStaff = userRole === "staff";
-  const bottomNavItems = allBottomNavItems.filter((item) => !isStaff || item.staffVisible);
+  const isOffice = userRole === "office";
+  const bottomNavItems = allBottomNavItems.filter((item) => {
+    if (isStaff) return item.staffVisible;
+    if (isOffice && item.officeHidden) return false;
+    return true;
+  });
+  const filteredMoreMenuItems = moreMenuItems.filter((item) => {
+    if (isOffice && item.officeHidden) return false;
+    return true;
+  });
 
   const isMoreActive =
-    !isStaff && moreMenuItems.some((item) => pathname.startsWith(item.href));
+    !isStaff && filteredMoreMenuItems.some((item) => pathname.startsWith(item.href));
 
   return (
     <>
@@ -126,7 +137,7 @@ export function MobileNav({ userRole }: { userRole: string }) {
             <SheetContent side="bottom" className="rounded-t-2xl px-0 pb-8">
               <SheetTitle className="px-5 pb-2 text-lg font-bold">メニュー</SheetTitle>
               <nav className="flex flex-col" aria-label="追加メニュー">
-                {!isStaff && moreMenuItems.map((item) => {
+                {!isStaff && filteredMoreMenuItems.map((item) => {
                   const isActive = pathname.startsWith(item.href);
                   return (
                     <Link

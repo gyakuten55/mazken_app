@@ -30,14 +30,31 @@ export const updateStaffSchema = createStaffSchema.partial().extend({
   qualificationIds: z.array(z.number().int()).optional(),
 });
 
+// --- Customer (得意先) ---
+
+export const createCustomerSchema = z.object({
+  code: z.string().nullable().optional(),
+  name: z.string().min(1, "得意先名は必須です"),
+  address: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+export const updateCustomerSchema = createCustomerSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
 // --- JobSite ---
 
 export const createJobSiteSchema = z.object({
   siteCode: z.string().min(1, "現場コードは必須です"),
   name: z.string().min(1, "現場名は必須です"),
   branchOfficeId: positiveInt,
+  customerId: z.number().int().nullable().optional(),
+  clientCode: z.string().nullable().optional(),
   clientName: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
+  mapUrl: z.string().nullable().optional(),
   contactName1: z.string().nullable().optional(),
   contactTel1: z.string().nullable().optional(),
   contactName2: z.string().nullable().optional(),
@@ -45,6 +62,13 @@ export const createJobSiteSchema = z.object({
   contactName3: z.string().nullable().optional(),
   contactTel3: z.string().nullable().optional(),
   transportation: z.string().nullable().optional(),
+  belongings: z.string().nullable().optional(),
+  siteMemo: z.string().nullable().optional(),
+  genDoMen: z.string().nullable().optional(),
+  workerPricingPolicy: z.enum(["possible", "impossible", "case_by_case"]).default("possible"),
+  dailyRateDorm1: z.number().int().min(0).nullable().optional(),
+  dailyRateDorm2: z.number().int().min(0).nullable().optional(),
+  dailyRateCommuter: z.number().int().min(0).nullable().optional(),
   startDate: dateString.nullable().optional(),
   endDate: dateString.nullable().optional(),
   requiredInsurance: z.enum(["any", "company_only", "national_only"]).nullable().optional(),
@@ -54,6 +78,7 @@ export const createJobSiteSchema = z.object({
   qualificationBonuses: z.array(z.object({
     qualificationId: positiveInt,
     bonusAmount: z.number().int().min(0),
+    isRequired: z.boolean().optional(),
   })).optional(),
 });
 
@@ -62,6 +87,13 @@ export const updateJobSiteSchema = createJobSiteSchema.partial().extend({
 });
 
 // --- Assignment ---
+
+// 配置単位の加算手当（路内・出張・食事・とび 等）
+const allowanceSchema = z.object({
+  name: z.string().min(1, "手当名を入力してください"),
+  amount: z.number().int().min(0),
+  category: z.enum(["special", "other"]).default("special"),
+});
 
 export const createAssignmentSchema = z.object({
   staffId: positiveInt.nullable().optional(), // null=未割当（後からスタッフを当てる）
@@ -74,7 +106,12 @@ export const createAssignmentSchema = z.object({
   startTime: timeString.default("08:00"),
   endTime: timeString.default("18:00"),
   dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  belongings: z.string().nullable().optional(),
+  contactName: z.string().nullable().optional(),
+  contactTel: z.string().nullable().optional(),
+  transportation: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  allowances: z.array(allowanceSchema).optional(),
   force: z.boolean().optional(),
 }).refine(
   (data) => data.startDate <= data.endDate,
@@ -91,6 +128,15 @@ export const bulkAssignmentSchema = z.object({
   shiftType: z.enum(["day", "night"]).default("day"),
   startTime: timeString.default("08:00"),
   endTime: timeString.default("18:00"),
+  // 単一作成と同じ任意フィールド。指定された値は全スタッフ共通でコピーされる
+  dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  belongings: z.string().nullable().optional(),
+  contactName: z.string().nullable().optional(),
+  contactTel: z.string().nullable().optional(),
+  transportation: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  allowances: z.array(allowanceSchema).optional(),
+  force: z.boolean().optional(),
 }).refine(
   (data) => data.startDate <= data.endDate,
   { message: "開始日は終了日以前にしてください", path: ["endDate"] }
@@ -104,7 +150,12 @@ export const updateAssignmentSchema = z.object({
   endTime: timeString.optional(),
   vehicleId: z.number().int().nullable().optional(),
   dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  belongings: z.string().nullable().optional(),
+  contactName: z.string().nullable().optional(),
+  contactTel: z.string().nullable().optional(),
+  transportation: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  allowances: z.array(allowanceSchema).optional(),
   force: z.boolean().optional(),
 });
 
@@ -129,12 +180,17 @@ export const moveAssignmentSchema = z.object({
 });
 
 export const assignmentDayPatchSchema = z.object({
-  status: z.enum(["scheduled", "cancelled", "completed"]).optional(),
+  status: z.enum(["scheduled", "cancelled", "completed", "pre_declined"]).optional(),
   acknowledged: z.boolean().optional(),
 }).refine(
   (data) => data.status !== undefined || data.acknowledged !== undefined,
   { message: "status または acknowledged のいずれかを指定してください" }
 );
+
+// 配置全期間の status を一括変更（事前断りトグルなど）
+export const assignmentBulkStatusSchema = z.object({
+  status: z.enum(["scheduled", "cancelled", "completed", "pre_declined"]),
+});
 
 // --- WorkCompletionForm ---
 

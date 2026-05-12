@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Eye } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -13,11 +13,26 @@ import {
 } from "@/components/ui/table";
 import { SITE_STATUSES } from "@/lib/constants";
 import { PageHeader } from "@/components/layout/page-header";
+import { getSession } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export default async function SitesPage() {
+  const session = await getSession();
+  if (!session) redirect("/login");
+  if (session.role === "staff") redirect("/calendar");
+  const canEdit = session.role === "admin";
+
   const sites = await prisma.jobSite.findMany({
-    include: { branchOffice: true },
-    orderBy: { createdAt: "desc" },
+    include: {
+      branchOffice: true,
+      customer: { select: { id: true, code: true, name: true } },
+    },
+    // 得意先（親）→ 現場（子）の階層で並べる
+    orderBy: [
+      { clientCode: "asc" },
+      { clientName: "asc" },
+      { siteCode: "asc" },
+    ],
   });
 
   return (
@@ -28,14 +43,16 @@ export default async function SitesPage() {
           { label: "現場" },
         ]}
         title="現場一覧"
-        description={`全 ${sites.length} 件`}
+        description={`全 ${sites.length} 件${canEdit ? "" : "（閲覧のみ）"}`}
         action={
-          <Link href="/sites/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              現場登録
-            </Button>
-          </Link>
+          canEdit ? (
+            <Link href="/sites/new">
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                現場登録
+              </Button>
+            </Link>
+          ) : null
         }
       />
       <div className="px-4 md:px-6 py-6">
@@ -44,9 +61,10 @@ export default async function SitesPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[80px]">コード</TableHead>
+              <TableHead className="w-[80px]">得意先コード</TableHead>
+              <TableHead className="hidden md:table-cell">得意先名</TableHead>
+              <TableHead className="w-[80px]">現場コード</TableHead>
               <TableHead>現場名</TableHead>
-              <TableHead className="hidden md:table-cell">元請け</TableHead>
               <TableHead className="hidden md:table-cell">担当営業所</TableHead>
               <TableHead className="hidden lg:table-cell">期間</TableHead>
               <TableHead>状態</TableHead>
@@ -56,9 +74,23 @@ export default async function SitesPage() {
           <TableBody>
             {sites.map((site) => (
               <TableRow key={site.id}>
+                <TableCell className="font-mono text-sm">
+                  {site.customer?.code ?? site.clientCode ?? "-"}
+                </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  {site.customer ? (
+                    <Link
+                      href={`/customers/${site.customer.id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {site.customer.name}
+                    </Link>
+                  ) : (
+                    site.clientName || "-"
+                  )}
+                </TableCell>
                 <TableCell className="font-mono text-sm">{site.siteCode}</TableCell>
                 <TableCell className="font-medium">{site.name}</TableCell>
-                <TableCell className="hidden md:table-cell">{site.clientName}</TableCell>
                 <TableCell className="hidden md:table-cell">
                   <Badge
                     variant="outline"
@@ -82,8 +114,8 @@ export default async function SitesPage() {
                 </TableCell>
                 <TableCell>
                   <Link href={`/sites/${site.id}`}>
-                    <Button variant="ghost" size="icon">
-                      <Pencil className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" title={canEdit ? "編集" : "詳細"}>
+                      {canEdit ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </Button>
                   </Link>
                 </TableCell>

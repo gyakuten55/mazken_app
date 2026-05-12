@@ -33,7 +33,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // スタッフ編集・削除は admin のみ（議事録: ユーザー1はスタッフ一覧の編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;
@@ -81,7 +82,8 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // スタッフ編集・削除は admin のみ（議事録: ユーザー1はスタッフ一覧の編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

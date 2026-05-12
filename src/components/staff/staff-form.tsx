@@ -22,6 +22,7 @@ type StaffData = {
   hasShaho?: boolean;
   hasKokuho?: boolean;
   hasIchiriOyakata?: boolean;
+  residenceType?: string;
   role: string;
   dailyRate: number | null;
   licenseExpiry: string | null;
@@ -33,10 +34,12 @@ export function StaffForm({
   staff,
   branchOffices,
   qualifications,
+  readOnly = false,
 }: {
   staff?: StaffData;
   branchOffices: BranchOffice[];
   qualifications: Qualification[];
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const isEdit = !!staff?.id;
@@ -53,6 +56,7 @@ export function StaffForm({
     hasShaho: staff?.hasShaho ?? false,
     hasKokuho: staff?.hasKokuho ?? false,
     hasIchiriOyakata: staff?.hasIchiriOyakata ?? false,
+    residenceType: staff?.residenceType || "commuter",
     role: staff?.role || "worker",
     dailyRate: staff?.dailyRate || 15000,
     licenseExpiry: staff?.licenseExpiry || "",
@@ -100,11 +104,17 @@ export function StaffForm({
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div className="bg-card rounded-xl border shadow-sm p-4 md:p-6 max-w-2xl space-y-6">
-      <p className="text-sm text-muted-foreground">
-        <RequiredMark />{" "}印がついた項目は必ず入力してください。
-      </p>
+    <form onSubmit={readOnly ? (e) => e.preventDefault() : handleSubmit}>
+      <fieldset disabled={readOnly} className="bg-card rounded-xl border shadow-sm p-4 md:p-6 max-w-2xl space-y-6 disabled:opacity-90">
+      {readOnly ? (
+        <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+          閲覧モード（編集には管理者権限が必要です）
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          <RequiredMark />{" "}印がついた項目は必ず入力してください。
+        </p>
+      )}
       <div className="form-section">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-4">基本情報</h2>
         <div className="space-y-4">
@@ -231,13 +241,30 @@ export function StaffForm({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>免許期限</Label>
-            <Input
-              type="date"
-              value={form.licenseExpiry}
-              onChange={(e) => update("licenseExpiry", e.target.value)}
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>寮区分</Label>
+              <select
+                className="w-full h-10 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                value={form.residenceType}
+                onChange={(e) => update("residenceType", e.target.value)}
+              >
+                <option value="dorm1">旧寮 (1日 1,950円 自己負担)</option>
+                <option value="dorm2">新寮 (1日 1,350円 自己負担)</option>
+                <option value="commuter">通い (0円)</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                日計表の宿泊欄に出勤日数 × 単価が自動加算されます。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>免許期限</Label>
+              <Input
+                type="date"
+                value={form.licenseExpiry}
+                onChange={(e) => update("licenseExpiry", e.target.value)}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -269,14 +296,16 @@ export function StaffForm({
       </div>
 
       <div className="flex gap-3">
-        <Button type="submit" disabled={loading} size="lg">
-          {loading ? "保存中..." : isEdit ? "更新する" : "登録する"}
-        </Button>
+        {!readOnly && (
+          <Button type="submit" disabled={loading} size="lg">
+            {loading ? "保存中..." : isEdit ? "更新する" : "登録する"}
+          </Button>
+        )}
         <Button type="button" variant="outline" size="lg" onClick={() => router.back()}>
-          キャンセル
+          {readOnly ? "戻る" : "キャンセル"}
         </Button>
       </div>
-      </div>
+      </fieldset>
     </form>
   );
 }

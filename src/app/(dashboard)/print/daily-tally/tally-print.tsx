@@ -19,10 +19,18 @@ type StaffInfo = {
   branchOffice: { id: number; name: string; code: string; color: string };
 };
 
+type SiteRef = {
+  id: number;
+  siteCode: string;
+  name: string;
+  clientCode: string | null;
+  clientName: string | null;
+};
+
 type DailyPaymentView = {
   id: number;
   staffId: number;
-  site1: { id: number; siteCode: string; name: string; clientName: string | null } | null;
+  site1: SiteRef | null;
   site1BaseFee: number;
   site1Driving: number;
   site1Holiday: number;
@@ -30,7 +38,7 @@ type DailyPaymentView = {
   site1Skill: number;
   site1Other: number;
   site1Additional: number;
-  site2: { id: number; siteCode: string; name: string; clientName: string | null } | null;
+  site2: SiteRef | null;
   site2BaseFee: number;
   site2Driving: number;
   site2Holiday: number;
@@ -292,11 +300,12 @@ function TallyPage({
           <col style={{ width: 16 }} />
           <col style={{ width: 66 }} />
           <col style={{ width: 28 }} />
-          <col style={{ width: 90 }} />
+          <col style={{ width: 60 }} />
+          <col style={{ width: 28 }} />
+          <col style={{ width: 80 }} />
           <col style={{ width: 42 }} />
           <col style={{ width: 34 }} />
           <col style={{ width: 34 }} />
-          <col style={{ width: 32 }} />
           <col style={{ width: 34 }} />
           <col style={{ width: 34 }} />
           <col style={{ width: 34 }} />
@@ -311,13 +320,15 @@ function TallyPage({
         </colgroup>
         <thead>
           <tr className="bg-gray-100">
-            <th className="border border-gray-500 p-1" rowSpan={2}>コード</th>
+            <th className="border border-gray-500 p-1" rowSpan={2}>社員<br />コード</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>No</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>免</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>氏名</th>
+            <th className="border border-gray-500 p-1" rowSpan={2}>得意先<br />コード</th>
+            <th className="border border-gray-500 p-1" rowSpan={2}>得意先名</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>現場<br />コード</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>現場名</th>
-            <th className="border border-gray-500 p-1" colSpan={7}>支払明細</th>
+            <th className="border border-gray-500 p-1" colSpan={6}>支払明細</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>支払い<br />合計</th>
             <th className="border border-gray-500 p-1" colSpan={4}>相殺明細</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>相殺<br />合計</th>
@@ -328,9 +339,8 @@ function TallyPage({
             <th className="border border-gray-400 p-0.5">基本料金</th>
             <th className="border border-gray-400 p-0.5">現場運転</th>
             <th className="border border-gray-400 p-0.5">自社計画</th>
-            <th className="border border-gray-400 p-0.5">リフト</th>
-            <th className="border border-gray-400 p-0.5">特殊技能</th>
-            <th className="border border-gray-400 p-0.5">その他</th>
+            <th className="border border-gray-400 p-0.5">特殊</th>
+            <th className="border border-gray-400 p-0.5">他</th>
             <th className="border border-gray-400 p-0.5">追加料金</th>
             <th className="border border-gray-400 p-0.5">安全会費</th>
             <th className="border border-gray-400 p-0.5">宿泊</th>
@@ -370,29 +380,28 @@ function TallyPage({
                   >
                     <div className="truncate font-medium">{row.staff.name}</div>
                   </td>
-                  {/* 現場1 コード */}
+                  {/* 得意先コード／得意先名（親） */}
+                  <td className="border border-gray-400 px-1 py-0.5 text-center font-mono text-[8px]">
+                    {dp?.site1?.clientCode ?? ""}
+                  </td>
+                  <td className="border border-gray-400 px-1 py-0.5 overflow-hidden">
+                    <div className="truncate text-[9px] text-gray-700">
+                      {dp?.site1?.clientName ?? ""}
+                    </div>
+                  </td>
+                  {/* 現場コード／現場名（子） */}
                   <td className="border border-gray-400 px-1 py-0.5 text-center font-mono text-[8px]">
                     {dp?.site1?.siteCode ?? ""}
                   </td>
                   <td className="border border-gray-400 px-1 py-0.5 overflow-hidden">
-                    <div className="truncate text-[9px]">
-                      {dp?.site1
-                        ? (
-                          <>
-                            {dp.site1.clientName && (
-                              <span className="text-gray-500 mr-1">{dp.site1.clientName.slice(0, 10)}</span>
-                            )}
-                            <span className="font-medium">{dp.site1.name}</span>
-                          </>
-                        )
-                        : ""}
+                    <div className="truncate text-[9px] font-medium">
+                      {dp?.site1?.name ?? ""}
                     </div>
                   </td>
-                  {/* 支払明細1 */}
+                  {/* 支払明細1（リフト列は削除） */}
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1BaseFee ?? 0)}</td>
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Driving ?? 0)}</td>
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Holiday ?? 0)}</td>
-                  <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Lift ?? 0)}</td>
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Skill ?? 0)}</td>
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Other ?? 0)}</td>
                   <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp?.site1Additional ?? 0)}</td>
@@ -456,24 +465,24 @@ function TallyPage({
                 {hasSite2 && dp && (
                   <tr className="align-middle">
                     <td className="border border-gray-400 px-1 py-0.5 text-center font-mono text-[8px]">
+                      {dp.site2?.clientCode ?? ""}
+                    </td>
+                    <td className="border border-gray-400 px-1 py-0.5 overflow-hidden">
+                      <div className="truncate text-[9px] text-gray-700">
+                        {dp.site2?.clientName ?? ""}
+                      </div>
+                    </td>
+                    <td className="border border-gray-400 px-1 py-0.5 text-center font-mono text-[8px]">
                       {dp.site2?.siteCode ?? ""}
                     </td>
                     <td className="border border-gray-400 px-1 py-0.5 overflow-hidden">
-                      <div className="truncate text-[9px]">
-                        {dp.site2 && (
-                          <>
-                            {dp.site2.clientName && (
-                              <span className="text-gray-500 mr-1">{dp.site2.clientName.slice(0, 10)}</span>
-                            )}
-                            <span className="font-medium">{dp.site2.name}</span>
-                          </>
-                        )}
+                      <div className="truncate text-[9px] font-medium">
+                        {dp.site2?.name ?? ""}
                       </div>
                     </td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2BaseFee)}</td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Driving)}</td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Holiday)}</td>
-                    <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Lift)}</td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Skill)}</td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Other)}</td>
                     <td className="border border-gray-400 px-1 py-0.5 text-right tabular-nums">{yen(dp.site2Additional)}</td>

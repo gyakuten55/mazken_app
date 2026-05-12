@@ -49,6 +49,7 @@ export default async function TallyPage({ searchParams }: PageProps) {
             color: b.color,
           }))}
           initialBranchCode={selectedBranch?.code ?? ""}
+          readOnly={session.role !== "admin"}
         />
       </div>
     </>

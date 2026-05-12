@@ -18,6 +18,7 @@ export async function GET(
     where: { id: numId },
     include: {
       branchOffice: true,
+      customer: { select: { id: true, code: true, name: true } },
       qualificationBonuses: { include: { qualification: true } },
     },
   });
@@ -29,7 +30,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 現場編集・削除は admin のみ（議事録: ユーザー1は現場一覧の編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;
@@ -42,11 +44,36 @@ export async function PUT(
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { qualificationBonuses, ...siteData } = parsed.data;
+  const { qualificationBonuses, customerId, clientCode, clientName, ...siteData } = parsed.data;
+
+  // customerId が指定されたら Customer から code/name を取得し、レガシー列にも同期
+  let customerSync: { customerId: number | null; clientCode: string | null; clientName: string | null } | null = null;
+  if (customerId !== undefined) {
+    if (customerId === null) {
+      customerSync = { customerId: null, clientCode: clientCode ?? null, clientName: clientName ?? null };
+    } else {
+      const c = await prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { id: true, code: true, name: true },
+      });
+      if (!c) {
+        return NextResponse.json({ error: "指定された得意先が見つかりません" }, { status: 400 });
+      }
+      customerSync = { customerId: c.id, clientCode: c.code, clientName: c.name };
+    }
+  }
+
   const site = await prisma.$transaction(async (tx) => {
     const updated = await tx.jobSite.update({
       where: { id: siteId },
-      data: siteData,
+      data: {
+        ...siteData,
+        ...(customerSync && {
+          customerId: customerSync.customerId,
+          clientCode: customerSync.clientCode,
+          clientName: customerSync.clientName,
+        }),
+      },
     });
     if (qualificationBonuses !== undefined) {
       // 全置換: 現状を削除してから新しい一覧を投入
@@ -57,6 +84,7 @@ export async function PUT(
             jobSiteId: siteId,
             qualificationId: qb.qualificationId,
             bonusAmount: qb.bonusAmount,
+            isRequired: qb.isRequired ?? false,
           })),
         });
       }
@@ -65,6 +93,7 @@ export async function PUT(
       where: { id: updated.id },
       include: {
         branchOffice: true,
+        customer: { select: { id: true, code: true, name: true } },
         qualificationBonuses: { include: { qualification: true } },
       },
     });
@@ -76,7 +105,8 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 現場編集・削除は admin のみ（議事録: ユーザー1は現場一覧の編集・削除NG）
+  const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

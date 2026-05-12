@@ -22,12 +22,20 @@ type StaffInfo = {
   branchOffice: { id: number; name: string; code: string; color: string };
 };
 
+type SiteRefView = {
+  id: number;
+  siteCode: string;
+  name: string;
+  clientCode: string | null;
+  clientName: string | null;
+};
+
 type DailyPaymentView = {
   id: number;
   staffId: number;
   date: string;
   site1Id: number | null;
-  site1: { id: number; siteCode: string; name: string; clientName: string | null } | null;
+  site1: SiteRefView | null;
   site1BaseFee: number;
   site1Driving: number;
   site1Holiday: number;
@@ -36,7 +44,7 @@ type DailyPaymentView = {
   site1Other: number;
   site1Additional: number;
   site2Id: number | null;
-  site2: { id: number; siteCode: string; name: string; clientName: string | null } | null;
+  site2: SiteRefView | null;
   site2BaseFee: number;
   site2Driving: number;
   site2Holiday: number;
@@ -171,9 +179,11 @@ type Props = {
   initialDate: string;
   branches: Branch[];
   initialBranchCode: string;
+  // ユーザー1（office）は閲覧・印刷のみ可能。お金関連は編集不可。
+  readOnly?: boolean;
 };
 
-export function TallyEditor({ initialDate, branches, initialBranchCode }: Props) {
+export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly = false }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -228,6 +238,7 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
   }, [date, branchCode]);
 
   function updateField(staffId: number, field: MoneyField, value: number) {
+    if (readOnly) return;
     setEditState((prev) => {
       const next = new Map(prev);
       const current = next.get(staffId) ?? emptyEditable();
@@ -368,19 +379,25 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
 
         <div className="flex-1" />
 
-        <Button
-          onClick={saveAll}
-          disabled={saving || dirtyStaffIds.size === 0}
-          size="lg"
-          className="min-w-28"
-        >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          保存{dirtyStaffIds.size > 0 && `（${dirtyStaffIds.size}件）`}
-        </Button>
+        {readOnly ? (
+          <span className="text-xs text-amber-600 font-medium px-3 py-1 rounded bg-amber-50 border border-amber-200">
+            閲覧モード（編集には管理者権限が必要）
+          </span>
+        ) : (
+          <Button
+            onClick={saveAll}
+            disabled={saving || dirtyStaffIds.size === 0}
+            size="lg"
+            className="min-w-28"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            保存{dirtyStaffIds.size > 0 && `（${dirtyStaffIds.size}件）`}
+          </Button>
+        )}
 
         <Link
           href={`/print/daily-tally?date=${date}${branchCode ? `&branch=${branchCode}` : ""}`}
@@ -419,10 +436,13 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
               <tr className="text-xs">
-                <th className="border px-2 py-2 text-left" rowSpan={2}>コード</th>
+                <th className="border px-2 py-2 text-left" rowSpan={2}>社員<br />コード</th>
                 <th className="border px-2 py-2 text-left" rowSpan={2}>氏名</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>現場</th>
-                <th className="border px-2 py-2 text-center" colSpan={7}>支払明細</th>
+                <th className="border px-2 py-2 text-left" rowSpan={2}>得意先<br />コード</th>
+                <th className="border px-2 py-2 text-left" rowSpan={2}>得意先名</th>
+                <th className="border px-2 py-2 text-left" rowSpan={2}>現場<br />コード</th>
+                <th className="border px-2 py-2 text-left" rowSpan={2}>現場名</th>
+                <th className="border px-2 py-2 text-center" colSpan={6}>支払明細</th>
                 <th className="border px-2 py-2 text-right" rowSpan={2}>支払<br />合計</th>
                 <th className="border px-2 py-2 text-center" colSpan={4}>相殺明細</th>
                 <th className="border px-2 py-2 text-right" rowSpan={2}>当日残</th>
@@ -432,7 +452,6 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
                 <th className="border px-1 py-1">基本</th>
                 <th className="border px-1 py-1">運転</th>
                 <th className="border px-1 py-1">自社</th>
-                <th className="border px-1 py-1">リフト</th>
                 <th className="border px-1 py-1">特殊</th>
                 <th className="border px-1 py-1">他</th>
                 <th className="border px-1 py-1">追加</th>
@@ -526,12 +545,19 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
                       )}
                     >
                       {staffCell}
-                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
-                        {row.dailyPayment?.site1
-                          ? `${row.dailyPayment.site1.siteCode} ${row.dailyPayment.site1.name}`
-                          : ""}
+                      <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap text-muted-foreground">
+                        {row.dailyPayment?.site1?.clientCode ?? ""}
                       </td>
-                      {(["site1BaseFee", "site1Driving", "site1Holiday", "site1Lift", "site1Skill", "site1Other", "site1Additional"] as const).map((f) => (
+                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
+                        {row.dailyPayment?.site1?.clientName ?? ""}
+                      </td>
+                      <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap">
+                        {row.dailyPayment?.site1?.siteCode ?? ""}
+                      </td>
+                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[140px] truncate">
+                        {row.dailyPayment?.site1?.name ?? ""}
+                      </td>
+                      {(["site1BaseFee", "site1Driving", "site1Holiday", "site1Skill", "site1Other", "site1Additional"] as const).map((f) => (
                         <MoneyCell
                           key={f}
                           value={edit[f]}
@@ -547,12 +573,19 @@ export function TallyEditor({ initialDate, branches, initialBranchCode }: Props)
                           isDirty && "bg-amber-50/60",
                         )}
                       >
-                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
-                          {row.dailyPayment?.site2
-                            ? `${row.dailyPayment.site2.siteCode} ${row.dailyPayment.site2.name}`
-                            : ""}
+                        <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap text-muted-foreground">
+                          {row.dailyPayment?.site2?.clientCode ?? ""}
                         </td>
-                        {(["site2BaseFee", "site2Driving", "site2Holiday", "site2Lift", "site2Skill", "site2Other", "site2Additional"] as const).map((f) => (
+                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
+                          {row.dailyPayment?.site2?.clientName ?? ""}
+                        </td>
+                        <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap">
+                          {row.dailyPayment?.site2?.siteCode ?? ""}
+                        </td>
+                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[140px] truncate">
+                          {row.dailyPayment?.site2?.name ?? ""}
+                        </td>
+                        {(["site2BaseFee", "site2Driving", "site2Holiday", "site2Skill", "site2Other", "site2Additional"] as const).map((f) => (
                           <MoneyCell
                             key={f}
                             value={edit[f]}

@@ -8,9 +8,17 @@ export type InsuranceWarning = {
   siteName: string;
 };
 
+export type VehicleConflict = {
+  plateNumber: string;
+  vehicleName: string | null;
+  conflictingSiteName: string;
+  dates: string[];
+};
+
 export type AssignmentCheckResult = {
   conflicts: ConflictInfo[];
   insuranceWarning: InsuranceWarning | null;
+  vehicleConflicts?: VehicleConflict[];
 };
 
 /**
@@ -18,38 +26,44 @@ export type AssignmentCheckResult = {
  * POST /api/assignments と PUT /api/assignments/[id]（staffId変更時）で共有。
  *
  * @param excludeAssignmentId PUT時、自分自身の assignmentDay を競合扱いしないために渡す
+ * @param vehicleId 指定された場合、同一日に同一車両が他の現場で使われていないかも検査
  */
 export async function checkAssignmentConflicts(args: {
-  staffId: number;
+  staffId: number | null;
   jobSiteId: number;
   dates: string[];
   excludeAssignmentId?: number;
+  vehicleId?: number | null;
 }): Promise<AssignmentCheckResult> {
-  const { staffId, jobSiteId, dates, excludeAssignmentId } = args;
+  const { staffId, jobSiteId, dates, excludeAssignmentId, vehicleId } = args;
   if (dates.length === 0) {
     return { conflicts: [], insuranceWarning: null };
   }
 
   const [conflictDays, staff, jobSite] = await Promise.all([
-    prisma.assignmentDay.findMany({
-      where: {
-        date: { in: dates },
-        status: "scheduled",
-        assignment: {
-          staffId,
-          ...(excludeAssignmentId ? { id: { not: excludeAssignmentId } } : {}),
-        },
-      },
-      include: {
-        assignment: {
-          include: { jobSite: { select: { id: true, name: true } } },
-        },
-      },
-    }),
-    prisma.staff.findUnique({
-      where: { id: staffId },
-      select: { insuranceType: true, hasShaho: true, hasKokuho: true, hasIchiriOyakata: true, name: true },
-    }),
+    staffId != null
+      ? prisma.assignmentDay.findMany({
+          where: {
+            date: { in: dates },
+            status: "scheduled",
+            assignment: {
+              staffId,
+              ...(excludeAssignmentId ? { id: { not: excludeAssignmentId } } : {}),
+            },
+          },
+          include: {
+            assignment: {
+              include: { jobSite: { select: { id: true, name: true } } },
+            },
+          },
+        })
+      : Promise.resolve([]),
+    staffId != null
+      ? prisma.staff.findUnique({
+          where: { id: staffId },
+          select: { insuranceType: true, hasShaho: true, hasKokuho: true, hasIchiriOyakata: true, name: true },
+        })
+      : Promise.resolve(null),
     prisma.jobSite.findUnique({
       where: { id: jobSiteId },
       select: { requiredInsurance: true, name: true },
@@ -85,5 +99,53 @@ export async function checkAssignmentConflicts(args: {
     }
   }
 
-  return { conflicts: Array.from(conflictSites.values()), insuranceWarning };
+  // 車両の二重利用チェック（同一日に同一車両が他の現場で使われている場合）
+  let vehicleConflicts: VehicleConflict[] | undefined;
+  if (vehicleId) {
+    const vehicleConflictDays = await prisma.assignmentDay.findMany({
+      where: {
+        date: { in: dates },
+        status: "scheduled",
+        assignment: {
+          vehicleId,
+          // 同一現場の同一車両は OK（同じ車で複数人移動するため）
+          NOT: { jobSiteId },
+          ...(excludeAssignmentId ? { id: { not: excludeAssignmentId } } : {}),
+        },
+      },
+      include: {
+        assignment: {
+          include: {
+            jobSite: { select: { name: true } },
+            vehicle: { select: { plateNumber: true, name: true } },
+          },
+        },
+      },
+    });
+    if (vehicleConflictDays.length > 0) {
+      const grouped = new Map<string, VehicleConflict>();
+      for (const d of vehicleConflictDays) {
+        if (!d.assignment.vehicle) continue;
+        const key = `${d.assignment.vehicle.plateNumber}|${d.assignment.jobSite.name}`;
+        const existing = grouped.get(key);
+        if (existing) {
+          existing.dates.push(d.date);
+        } else {
+          grouped.set(key, {
+            plateNumber: d.assignment.vehicle.plateNumber,
+            vehicleName: d.assignment.vehicle.name,
+            conflictingSiteName: d.assignment.jobSite.name,
+            dates: [d.date],
+          });
+        }
+      }
+      vehicleConflicts = Array.from(grouped.values());
+    }
+  }
+
+  return {
+    conflicts: Array.from(conflictSites.values()),
+    insuranceWarning,
+    vehicleConflicts,
+  };
 }

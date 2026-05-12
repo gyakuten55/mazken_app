@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
+import { format, parseISO } from "date-fns";
+import { ja } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import {
   ChevronLeft,
@@ -46,7 +48,33 @@ export function CalendarView({
   const [today, setToday] = useState("");
   useEffect(() => { setToday(formatDateISO(new Date())); }, []);
   const [staffRows, setStaffRows] = useState<StaffRow[]>([]);
-  const [allSites, setAllSites] = useState<{ id: number; name: string; siteCode: string; branchOffice: { color: string; name: string } }[]>([]);
+  // パネルにそのまま渡せる完全な sites（必要保険・必須資格を含む）
+  type FullSite = {
+    id: number;
+    name: string;
+    siteCode: string;
+    workCategory?: string;
+    requiredHeadcount?: number | null;
+    requiredInsurance?: string | null;
+    branchOfficeId?: number;
+    clientCode?: string | null;
+    clientName?: string | null;
+    notes?: string | null;
+    belongings?: string | null;
+    contactName1?: string | null;
+    contactTel1?: string | null;
+    qualificationBonuses?: { qualificationId: number; isRequired?: boolean }[];
+    branchOffice: { color: string; name: string };
+  };
+  const [allSites, setAllSites] = useState<FullSite[]>([]);
+  const [allVehicles, setAllVehicles] = useState<{ id: number; plateNumber: string; name: string | null; isActive: boolean }[]>([]);
+  const [workCategoryFilter, setWorkCategoryFilter] = useState<string>("");
+
+  // ドラッグ中の未割当 Assignment ID（HTML5 DnD）
+  // 議事録: 「上に未割り当て案件を表示」「ボックスをドラッグして配置」
+  const [draggingUnassignedId, setDraggingUnassignedId] = useState<number | null>(null);
+  const [dropTargetCellKey, setDropTargetCellKey] = useState<string | null>(null);
+  const [dropAssigning, setDropAssigning] = useState(false);
   const [unassignedAssignments, setUnassignedAssignments] = useState<Assignment[]>([]);
   const [headcounts, setHeadcounts] = useState<HeadcountData[]>([]);
   const [headcountBySite, setHeadcountBySite] = useState<HeadcountBySite[]>([]);
@@ -61,7 +89,8 @@ export function CalendarView({
     useState<Assignment | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(1);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
-  const [hoveredCell, setHoveredCell] = useState<string | null>(null);
+  // hoveredCell の state は廃止（500セル全体の再レンダーを誘発していた）。
+  // 「+」ボタンのホバー表示は CSS の group-hover/cell クラスで実現する。
   const gridRef = useRef<HTMLDivElement>(null);
 
   const [showPrint, setShowPrint] = useState(false);
@@ -153,12 +182,15 @@ export function CalendarView({
   } | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
 
-  // Generate dates for the view
-  const allDates: Date[] = [];
-  for (let w = 0; w < weeksToShow; w++) {
-    const dates = getWeekDates(addWeeks(currentDate, w));
-    allDates.push(...dates);
-  }
+  // Generate dates for the view（currentDate / weeksToShow が変わったときだけ再計算）
+  const allDates = useMemo(() => {
+    const arr: Date[] = [];
+    for (let w = 0; w < weeksToShow; w++) {
+      const dates = getWeekDates(addWeeks(currentDate, w));
+      arr.push(...dates);
+    }
+    return arr;
+  }, [currentDate, weeksToShow]);
   const startDate = formatDateISO(allDates[0]);
   const endDate = formatDateISO(allDates[allDates.length - 1]);
 
@@ -193,20 +225,75 @@ export function CalendarView({
     fetchData();
   }, [fetchData]);
 
-  // 現場マスタ全件を取得（site ビューで未配置の現場も表示するため）
+  // 未割当バナー用の安定したハンドラ（参照同一性を保つことで memo の効果を出す）
+  const handleUnassignedDragStart = useCallback((id: number) => {
+    setDraggingUnassignedId(id);
+  }, []);
+  const handleUnassignedDragEnd = useCallback(() => {
+    setDraggingUnassignedId(null);
+    setDropTargetCellKey(null);
+  }, []);
+  const handleUnassignedCardClick = useCallback((a: Assignment) => {
+    setSelectedStaffId(null);
+    setSelectedSiteId(null);
+    setSelectedDate(a.startDate || "");
+    setSelectedAssignment(a);
+    setPanelOpen(true);
+  }, []);
+
+  // 未割当配置をスタッフに割り当て（ドラッグ&ドロップで実行）
+  // 議事録: 「ここに2割当てを入れますそこにアサインしたら消えてドラッグして落としていく」
+  const assignUnassignedToStaff = useCallback(
+    async (assignmentId: number, staffId: number, force = false) => {
+      setDropAssigning(true);
+      try {
+        const res = await fetch(`/api/assignments/${assignmentId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ staffId, force }),
+        });
+        if (res.status === 409) {
+          const data = await res.json().catch(() => ({}));
+          const conflictNames = (data.conflicts as { siteName: string }[] | undefined)
+            ?.map((c) => c.siteName)
+            .join(", ");
+          const insuranceMsg = data.insuranceWarning ? "保険種別不一致" : "";
+          const msg = [conflictNames && `競合: ${conflictNames}`, insuranceMsg]
+            .filter(Boolean)
+            .join(" / ");
+          if (window.confirm(`警告 (${msg})\nそれでも割り当てますか？`)) {
+            return assignUnassignedToStaff(assignmentId, staffId, true);
+          }
+          return;
+        }
+        if (!res.ok) {
+          alert("割り当てに失敗しました");
+          return;
+        }
+        await fetchData(true);
+      } finally {
+        setDropAssigning(false);
+        setDraggingUnassignedId(null);
+        setDropTargetCellKey(null);
+      }
+    },
+    [fetchData],
+  );
+
+  // 現場マスタと車両マスタは初回 1 回だけ取得し、AssignmentPanel にも props で渡す
+  // （以前は AssignmentPanel が毎回 fetch していたためモーダルを開くたびに 200ms+ の遅延があった）
   useEffect(() => {
     fetch("/api/sites?status=active")
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
+        if (Array.isArray(data)) setAllSites(data);
+      })
+      .catch(() => {});
+    fetch("/api/vehicles")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
         if (Array.isArray(data)) {
-          setAllSites(
-            data.map((s: { id: number; name: string; siteCode: string; branchOffice: { color: string; name: string } }) => ({
-              id: s.id,
-              name: s.name,
-              siteCode: s.siteCode,
-              branchOffice: s.branchOffice,
-            }))
-          );
+          setAllVehicles(data.filter((v: { isActive: boolean }) => v.isActive));
         }
       })
       .catch(() => {});
@@ -263,24 +350,69 @@ export function CalendarView({
   }
 
   // Build a set of all visible date strings for fast lookup
-  const allDateStrings = allDates.map(formatDateISO);
+  // 各セルから O(1) で日付インデックスを引けるようにキャッシュ
+  const allDateStrings = useMemo(() => allDates.map(formatDateISO), [allDates]);
+  const dateIndexMap = useMemo(() => {
+    const m = new Map<string, number>();
+    allDateStrings.forEach((d, i) => m.set(d, i));
+    return m;
+  }, [allDateStrings]);
+  // 各日付の表示メタを 1 度だけ計算（500+ セルそれぞれで isSunday/isWeekend/getHolidayName を
+  // 呼ばない）
+  const dateMeta = useMemo(
+    () =>
+      allDates.map((date, i) => {
+        const dateStr = allDateStrings[i];
+        const sunday = isSunday(date);
+        const weekend = isWeekend(date);
+        const holiday = getHolidayName(dateStr);
+        return {
+          date,
+          dateStr,
+          sunday,
+          weekend,
+          holiday,
+          isRedDay: sunday || !!holiday,
+        };
+      }),
+    [allDates, allDateStrings],
+  );
 
-  function getAssignmentsForDate(assignments: Assignment[], date: string) {
-    return assignments.filter((a) =>
-      a.assignmentDays.some((d) => d.date === date && d.status === "scheduled")
-    );
+  // 配置インデックス: staffId → date → Assignment[]（O(1) 参照、セル毎のフィルタを避ける）
+  // staffRows が変わったときだけ再計算するため useMemo
+  const assignmentsByStaffDate = useMemo(() => {
+    const map = new Map<number, Map<string, Assignment[]>>();
+    for (const s of staffRows) {
+      const dateMap = new Map<string, Assignment[]>();
+      for (const a of s.assignments) {
+        for (const d of a.assignmentDays) {
+          if (d.status !== "scheduled") continue;
+          const list = dateMap.get(d.date);
+          if (list) list.push(a);
+          else dateMap.set(d.date, [a]);
+        }
+      }
+      map.set(s.id, dateMap);
+    }
+    return map;
+  }, [staffRows]);
+
+  function getAssignmentsForDate(staffId: number, date: string) {
+    return assignmentsByStaffDate.get(staffId)?.get(date) ?? [];
   }
 
   // Determine the position of a date within an assignment's consecutive scheduled run
   // Returns: 'single' | 'start' | 'middle' | 'end'
+  // dateIndexMap で O(1) ルックアップ。assignmentDays の Set 化はキャッシュ可能だが
+  // 呼び出し回数が限定的なのでこのままにする。
   function getSpanPosition(
     assignment: Assignment,
     dateStr: string
   ): "single" | "start" | "middle" | "end" {
-    const idx = allDateStrings.indexOf(dateStr);
+    const idx = dateIndexMap.get(dateStr) ?? -1;
     const prevDateStr = idx > 0 ? allDateStrings[idx - 1] : null;
     const nextDateStr =
-      idx < allDateStrings.length - 1 ? allDateStrings[idx + 1] : null;
+      idx >= 0 && idx < allDateStrings.length - 1 ? allDateStrings[idx + 1] : null;
 
     const scheduledDates = new Set(
       assignment.assignmentDays
@@ -559,8 +691,8 @@ export function CalendarView({
   const maxHeadcount = Math.max(...headcounts.map((h) => h.total), 1);
   const isCompact = weeksToShow >= 4;
 
-  // Filter staff rows by search text or selected IDs
-  const filteredStaffRows = (() => {
+  // Filter staff rows by search text or selected IDs（参照を安定化）
+  const filteredStaffRows = useMemo(() => {
     if (staffFilterMode === "search" && staffFilter.trim()) {
       const q = staffFilter.trim().toLowerCase();
       return staffRows.filter((s) =>
@@ -573,7 +705,7 @@ export function CalendarView({
       return staffRows.filter((s) => selectedStaffIds.has(s.id));
     }
     return staffRows;
-  })();
+  }, [staffRows, staffFilterMode, staffFilter, selectedStaffIds]);
 
   // --- Site-based view: pivot data by job site ---
   type SiteStaffEntry = {
@@ -587,8 +719,13 @@ export function CalendarView({
     id: number;
     name: string;
     siteCode: string;
+    clientCode?: string | null;
+    clientName?: string | null;
+    workCategory?: string;
+    requiredHeadcount?: number | null;
     branchOffice: { color: string; name: string };
     staffByDate: Map<string, SiteStaffEntry[]>;
+    hasUnassigned: boolean;
   };
 
   const siteRows = useMemo<SiteRow[]>(() => {
@@ -599,8 +736,13 @@ export function CalendarView({
         id: site.id,
         name: site.name,
         siteCode: site.siteCode,
+        clientCode: site.clientCode,
+        clientName: site.clientName,
+        workCategory: site.workCategory,
+        requiredHeadcount: site.requiredHeadcount,
         branchOffice: site.branchOffice,
         staffByDate: new Map(),
+        hasUnassigned: false,
       });
     }
     for (const staff of staffRows) {
@@ -613,10 +755,12 @@ export function CalendarView({
             siteCode: site.siteCode,
             branchOffice: site.branchOffice,
             staffByDate: new Map(),
+            hasUnassigned: false,
           });
         }
         const row = siteMap.get(site.id)!;
         for (const day of assignment.assignmentDays) {
+          // 事前断り・キャンセルは表示しない（必要なら別レーンを増やすが今回はスキップ）
           if (day.status !== "scheduled") continue;
           if (!row.staffByDate.has(day.date)) row.staffByDate.set(day.date, []);
           row.staffByDate.get(day.date)!.push({
@@ -639,6 +783,7 @@ export function CalendarView({
           siteCode: site.siteCode,
           branchOffice: site.branchOffice,
           staffByDate: new Map(),
+          hasUnassigned: false,
         });
       }
       const row = siteMap.get(site.id)!;
@@ -652,25 +797,44 @@ export function CalendarView({
           assignmentType: assignment.assignmentType,
           assignment,
         });
+        row.hasUnassigned = true;
       }
     }
-    return Array.from(siteMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    // 並び順:
+    //   1. 未割当を含む現場を最上部に固定（議事録: 「上に未割り当て案件を表示」）
+    //   2. 同条件内では 得意先(親) → 現場(子) の階層順、最後に名前順
+    return Array.from(siteMap.values()).sort((a, b) => {
+      if (a.hasUnassigned !== b.hasUnassigned) return a.hasUnassigned ? -1 : 1;
+      const ac = a.clientCode || "";
+      const bc = b.clientCode || "";
+      if (ac !== bc) return ac.localeCompare(bc);
+      const an = a.clientName || "";
+      const bn = b.clientName || "";
+      if (an !== bn) return an.localeCompare(bn);
+      return a.name.localeCompare(b.name);
+    });
   }, [staffRows, allSites, unassignedAssignments]);
 
-  // Filter site rows
-  const filteredSiteRows = (() => {
+  // Filter site rows（参照を安定化、毎レンダーの再計算を抑止）
+  const filteredSiteRows = useMemo(() => {
+    let rows = siteRows;
+    if (workCategoryFilter) {
+      rows = rows.filter((s) => s.workCategory === workCategoryFilter);
+    }
     if (staffFilterMode === "search" && staffFilter.trim()) {
       const q = staffFilter.trim().toLowerCase();
-      return siteRows.filter((s) =>
+      rows = rows.filter((s) =>
         s.name.toLowerCase().includes(q) ||
-        s.siteCode.toLowerCase().includes(q)
+        s.siteCode.toLowerCase().includes(q) ||
+        (s.clientName ?? "").toLowerCase().includes(q) ||
+        (s.clientCode ?? "").toLowerCase().includes(q)
       );
     }
     if (staffFilterMode === "select" && selectedStaffIds.size > 0) {
-      return siteRows.filter((s) => selectedStaffIds.has(s.id));
+      rows = rows.filter((s) => selectedStaffIds.has(s.id));
     }
-    return siteRows;
-  })();
+    return rows;
+  }, [siteRows, workCategoryFilter, staffFilterMode, staffFilter, selectedStaffIds]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)] md:h-screen relative">
@@ -782,6 +946,22 @@ export function CalendarView({
         >
           一括配置
         </button>
+
+        {/* 作業区分フィルタ（現場ビューのみ） */}
+        {viewMode === "site" && (
+          <select
+            value={workCategoryFilter}
+            onChange={(e) => setWorkCategoryFilter(e.target.value)}
+            className="h-10 px-3 rounded-lg text-sm border border-border bg-background hover:bg-muted"
+            aria-label="作業区分で絞り込み"
+            title="作業区分で絞り込み"
+          >
+            <option value="">作業区分: すべて</option>
+            <option value="chikuro">築炉工事</option>
+            <option value="regular">レギュラー</option>
+            <option value="spot">スポット</option>
+          </select>
+        )}
 
         {/* Print button with date range popover */}
         <Popover open={printPopoverOpen} onOpenChange={(open) => {
@@ -1023,6 +1203,17 @@ export function CalendarView({
         )}
       </div>
 
+      {/* ===== 未割当バナー（議事録: 「上に未割り当て案件を表示」「ドラッグして落としていく」） ===== */}
+      <UnassignedBanner
+        viewMode={viewMode}
+        unassignedAssignments={unassignedAssignments}
+        draggingUnassignedId={draggingUnassignedId}
+        dropAssigning={dropAssigning}
+        onDragStart={handleUnassignedDragStart}
+        onDragEnd={handleUnassignedDragEnd}
+        onCardClick={handleUnassignedCardClick}
+      />
+
       {/* ===== TABLE VIEWS (staff / site) ===== */}
       <div
         ref={gridRef}
@@ -1046,14 +1237,9 @@ export function CalendarView({
                 <th className="border-b border-r p-2 text-left text-xs font-medium text-muted-foreground bg-card sticky left-0 z-20">
                   {viewMode === "staff" ? "スタッフ" : "現場"}
                 </th>
-                {allDates.map((date, dateIndex) => {
-                  const dateStr = formatDateISO(date);
+                {dateMeta.map(({ date, dateStr, sunday, weekend, holiday, isRedDay }, dateIndex) => {
                   const hc = getHeadcount(dateStr);
                   const isToday = dateStr === today;
-                  const sunday = isSunday(date);
-                  const weekend = isWeekend(date);
-                  const holiday = getHolidayName(dateStr);
-                  const isRedDay = sunday || !!holiday;
                   const intensity = hc > 0 ? Math.min(hc / maxHeadcount, 1) : 0;
                   const isWeekBoundary = isCompact && dateIndex > 0 && dateIndex % 7 === 0;
                   return (
@@ -1157,13 +1343,20 @@ export function CalendarView({
                     </td>
                   </tr>
                 ) : (
-                  filteredSiteRows.map((siteRow) => (
+                  filteredSiteRows.map((siteRow) => {
+                    // 期間内の代表日（最初の日）の配置済み人数で必要人数バッジを表示
+                    const firstDateStr = formatDateISO(allDates[0]);
+                    const dayStaffFirst = siteRow.staffByDate.get(firstDateStr) ?? [];
+                    const scheduledFirst = dayStaffFirst.length;
+                    const requiredHeadcount = siteRow.requiredHeadcount ?? null;
+                    return (
                     <tr key={siteRow.id} className="group/row">
                       {/* Site name - sticky left */}
                       <td className={cn(
                         "border-b border-r bg-card sticky left-0 z-[5] transition-colors",
                         isCompact ? "p-1 text-xs" : "p-1.5 text-sm",
-                        "group-hover/row:bg-accent/30"
+                        "group-hover/row:bg-accent/30",
+                        siteRow.hasUnassigned && "bg-amber-50/40",
                       )}>
                         <div className="flex items-center gap-1.5">
                           <div
@@ -1173,10 +1366,26 @@ export function CalendarView({
                           <div className="min-w-0">
                             <div className={cn("font-medium truncate leading-tight", isCompact ? "text-[11px]" : "text-[13px]")}>
                               {siteRow.name}
+                              {requiredHeadcount != null && (
+                                <span
+                                  className={cn(
+                                    "ml-1 text-[10px] px-1 rounded font-mono",
+                                    scheduledFirst >= requiredHeadcount
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-amber-100 text-amber-800",
+                                  )}
+                                  title={`必要 ${requiredHeadcount}名 / 配置 ${scheduledFirst}名（先頭日）`}
+                                >
+                                  {scheduledFirst}/{requiredHeadcount}
+                                </span>
+                              )}
+                              {siteRow.hasUnassigned && (
+                                <span className="ml-1 text-[9px] px-1 rounded bg-amber-200 text-amber-900">未割当</span>
+                              )}
                             </div>
                             {!isCompact && (
                               <div className="text-[10px] text-muted-foreground leading-tight">
-                                {siteRow.siteCode}
+                                {siteRow.clientName ? `${siteRow.clientName} / ` : ""}{siteRow.siteCode}
                               </div>
                             )}
                           </div>
@@ -1184,12 +1393,7 @@ export function CalendarView({
                       </td>
 
                       {/* Date cells */}
-                      {allDates.map((date, dateIdx) => {
-                        const dateStr = formatDateISO(date);
-                        const sunday = isSunday(date);
-                        const weekend = isWeekend(date);
-                        const cellHoliday = getHolidayName(dateStr);
-                        const isRedDay = sunday || !!cellHoliday;
+                      {dateMeta.map(({ dateStr, sunday, weekend, isRedDay }, dateIdx) => {
                         const isToday = dateStr === today;
                         const isCellWeekBoundary = isCompact && dateIdx > 0 && dateIdx % 7 === 0;
                         const dayStaff = siteRow.staffByDate.get(dateStr) || [];
@@ -1267,7 +1471,8 @@ export function CalendarView({
                         );
                       })}
                     </tr>
-                  ))
+                    );
+                  })
                 )
               ) : (
                 /* ========== STAFF VIEW (default) ========== */
@@ -1281,7 +1486,15 @@ export function CalendarView({
                   </td>
                 </tr>
               ) : (
-                filteredStaffRows.map((staff) => {
+                (() => {
+                  // ループの外で 1 回だけ計算（毎セル .find() を呼ばないため）
+                  const draggingUnassigned =
+                    draggingUnassignedId !== null
+                      ? unassignedAssignments.find((u) => u.id === draggingUnassignedId) ?? null
+                      : null;
+                  const dragStart = draggingUnassigned?.startDate ?? null;
+                  const dragEnd = draggingUnassigned?.endDate ?? null;
+                  return filteredStaffRows.map((staff) => {
                   const isMoveTarget = isMoveDragging && moveDrag!.currentStaffId === staff.id && moveDrag!.fromStaffId !== staff.id;
                   return (
                   <tr
@@ -1336,44 +1549,60 @@ export function CalendarView({
                     </td>
 
                     {/* Day cells */}
-                    {allDates.map((date, dateIdx) => {
-                      const dateStr = formatDateISO(date);
-                      const sunday = isSunday(date);
-                      const weekend = isWeekend(date);
-                      const cellHoliday = getHolidayName(dateStr);
-                      const isRedDay = sunday || !!cellHoliday;
+                    {dateMeta.map(({ dateStr, sunday, weekend, isRedDay }, dateIdx) => {
                       const isToday = dateStr === today;
                       const cellKey = `${staff.id}-${dateStr}`;
-                      const isHovered = hoveredCell === cellKey && !isDragging;
                       const inDrag = isCellInDragRange(staff.id, dateStr);
-                      const dayAssignments = getAssignmentsForDate(
-                        staff.assignments,
-                        dateStr
-                      );
+                      const dayAssignments = getAssignmentsForDate(staff.id, dateStr);
                       const isDoubleBooked = dayAssignments.length >= 2;
                       const isCellWeekBoundary = isCompact && dateIdx > 0 && dateIdx % 7 === 0;
 
+                      const isUnassignedDropTarget =
+                        draggingUnassignedId !== null && dropTargetCellKey === cellKey;
+                      // 期間チェックのみ（draggingUnassigned 自体はループ外で 1 回計算済み）
+                      const dropEligible = !!(
+                        dragStart && dragEnd && dateStr >= dragStart && dateStr <= dragEnd
+                      );
                       return (
                         <td
                           key={dateStr}
                           className={cn(
-                            "border-b border-r p-0 align-top relative select-none",
+                            // group/cell: 「+」ボタンを CSS hover で開閉する（state不要）
+                            "group/cell border-b border-r p-0 align-top relative select-none",
                             isRedDay && "bg-red-50/40",
                             weekend && !isRedDay && "bg-blue-50/40",
                             isToday && "!bg-primary/[0.03]",
-                            !isDragging && "group-hover/row:bg-accent/10 transition-colors",
+                            !isDragging && "group-hover/row:bg-accent/10",
                             inDrag && "!bg-primary/10 ring-1 ring-inset ring-primary/30",
                             isCellWeekBoundary && "border-l-2 border-l-primary/20",
+                            isUnassignedDropTarget && dropEligible && "!bg-emerald-100 ring-2 ring-inset ring-emerald-500",
+                            draggingUnassignedId !== null && !dropEligible && "opacity-60",
                           )}
                           onMouseEnter={() => {
-                            setHoveredCell(cellKey);
+                            // hoveredCell state は廃止。ドラッグ系の handler のみ呼ぶ
                             handleCellMouseEnter(staff.id, dateStr);
                             handleCellMouseEnterForMove(staff.id, dateStr);
                           }}
-                          onMouseLeave={() => setHoveredCell(null)}
                           onMouseDown={(e) => handleCellMouseDown(staff.id, dateStr, e)}
                           onClick={() => {
                             if (!isDragging) handleCellClick(staff.id, dateStr);
+                          }}
+                          onDragOver={(e) => {
+                            if (draggingUnassignedId !== null && dropEligible) {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (dropTargetCellKey !== cellKey) setDropTargetCellKey(cellKey);
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dropTargetCellKey === cellKey) setDropTargetCellKey(null);
+                          }}
+                          onDrop={(e) => {
+                            if (draggingUnassignedId !== null && dropEligible) {
+                              e.preventDefault();
+                              const id = draggingUnassignedId;
+                              assignUnassignedToStaff(id, staff.id);
+                            }
                           }}
                         >
                           {isToday && (
@@ -1463,19 +1692,17 @@ export function CalendarView({
                               );
                             })}
 
-                            {/* Add button - expands on hover, keeps height during drag */}
+                            {/* Add button - CSS hover で展開（再レンダー不要） */}
                             {!sunday && !isCompact && (
                               <div
                                 className={cn(
-                                  "overflow-hidden transition-all duration-150 ease-out",
-                                  isHovered || inDrag
-                                    ? "h-8 py-1"
-                                    : "h-0 py-0"
+                                  "overflow-hidden",
+                                  inDrag ? "h-8 py-1" : "h-0 py-0 group-hover/cell:h-8 group-hover/cell:py-1",
                                 )}
                               >
                                 {!isDragging && (
                                   <div className="flex items-center justify-center">
-                                    <div className="w-6 h-6 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center transition-colors cursor-pointer">
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center cursor-pointer">
                                       <Plus className="h-3.5 w-3.5 text-primary/70" />
                                     </div>
                                   </div>
@@ -1488,7 +1715,8 @@ export function CalendarView({
                     })}
                   </tr>
                   );
-                })
+                });
+                })()
               ))}
             </tbody>
           </table>
@@ -1560,10 +1788,10 @@ export function CalendarView({
         </div>
       )}
 
-      {/* Panel Overlay */}
+      {/* Panel Overlay (window-modal) */}
       {panelOpen && (
         <div
-          className="fixed inset-0 bg-black/20 z-40 animate-in fade-in duration-200"
+          className="fixed inset-0 bg-black/40 z-40 animate-in fade-in duration-150"
           onClick={() => {
             setPanelOpen(false);
             setSelectedAssignment(null);
@@ -1571,32 +1799,38 @@ export function CalendarView({
         />
       )}
 
-      {/* Assignment Side Panel */}
-      <div
-        className={cn(
-          "fixed top-0 right-0 h-full z-50 transition-transform duration-300 ease-out w-full sm:w-auto",
-          panelOpen ? "translate-x-0" : "translate-x-full"
-        )}
-      >
-        {panelOpen && (
-          <AssignmentPanel
-            staffId={selectedStaffId}
-            preselectedSiteId={selectedSiteId}
-            date={selectedDate}
-            endDate={dragEndDate || selectedDate}
-            assignment={selectedAssignment}
-            onClose={() => {
-              setPanelOpen(false);
-              setSelectedAssignment(null);
-            }}
-            onSaved={() => {
-              setPanelOpen(false);
-              setSelectedAssignment(null);
-              fetchData(true);
-            }}
-          />
-        )}
-      </div>
+      {/* Assignment Window Modal — 議事録: 「ウィンドウモーダル化」「PDF開いたみたいな感じでポッと出てくる」 */}
+      {panelOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-6 sm:pt-12 px-2 sm:px-4 pointer-events-none"
+          aria-modal="true"
+          role="dialog"
+        >
+          <div
+            className="pointer-events-auto w-full sm:w-[min(96vw,1080px)] max-w-full max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-4rem)] animate-in fade-in duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <AssignmentPanel
+              staffId={selectedStaffId}
+              preselectedSiteId={selectedSiteId}
+              date={selectedDate}
+              endDate={dragEndDate || selectedDate}
+              assignment={selectedAssignment}
+              cachedSites={allSites}
+              cachedVehicles={allVehicles}
+              onClose={() => {
+                setPanelOpen(false);
+                setSelectedAssignment(null);
+              }}
+              onSaved={() => {
+                setPanelOpen(false);
+                setSelectedAssignment(null);
+                fetchData(true);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Floating ghost while dragging a card */}
       {moveDrag && (
@@ -1650,38 +1884,42 @@ export function CalendarView({
       {/* Bulk Panel Overlay */}
       {bulkPanelOpen && (
         <div
-          className="fixed inset-0 bg-black/20 z-40 animate-in fade-in duration-200"
+          className="fixed inset-0 bg-black/40 z-40 animate-in fade-in duration-150"
           onClick={() => setBulkPanelOpen(false)}
         />
       )}
 
-      {/* Bulk Assignment Side Panel */}
-      <div
-        className={cn(
-          "fixed top-0 right-0 h-full z-50 transition-transform duration-300 ease-out w-full sm:w-auto",
-          bulkPanelOpen ? "translate-x-0" : "translate-x-full"
-        )}
-      >
-        {bulkPanelOpen && (
-          <BulkAssignmentPanel
-            selectedStaff={staffRows
-              .filter((s) => bulkSelectedIds.has(s.id))
-              .map((s) => ({
-                id: s.id,
-                name: s.displayName || s.name,
-                branchColor: s.branchOffice.color,
-              }))}
-            date={startDate}
-            endDate={startDate}
-            onClose={() => setBulkPanelOpen(false)}
-            onSaved={() => {
-              setBulkPanelOpen(false);
-              exitBulkMode();
-              fetchData(true);
-            }}
-          />
-        )}
-      </div>
+      {/* Bulk Assignment Window Modal */}
+      {bulkPanelOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-6 sm:pt-12 px-2 sm:px-4 pointer-events-none"
+          aria-modal="true"
+          role="dialog"
+        >
+          <div
+            className="pointer-events-auto w-full sm:w-[min(96vw,1080px)] max-w-full max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-4rem)] animate-in fade-in duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <BulkAssignmentPanel
+              selectedStaff={staffRows
+                .filter((s) => bulkSelectedIds.has(s.id))
+                .map((s) => ({
+                  id: s.id,
+                  name: s.displayName || s.name,
+                  branchColor: s.branchOffice.color,
+                }))}
+              date={startDate}
+              endDate={startDate}
+              onClose={() => setBulkPanelOpen(false)}
+              onSaved={() => {
+                setBulkPanelOpen(false);
+                exitBulkMode();
+                fetchData(true);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Print view */}
       {showPrint && (
@@ -1756,3 +1994,79 @@ export function CalendarView({
     </div>
   );
 }
+
+// 未割当バナー（メモ化して、親の state 変化に巻き込まれないようにする）
+const UnassignedBanner = memo(function UnassignedBanner({
+  viewMode,
+  unassignedAssignments,
+  draggingUnassignedId,
+  dropAssigning,
+  onDragStart,
+  onDragEnd,
+  onCardClick,
+}: {
+  viewMode: "staff" | "site";
+  unassignedAssignments: Assignment[];
+  draggingUnassignedId: number | null;
+  dropAssigning: boolean;
+  onDragStart: (id: number) => void;
+  onDragEnd: () => void;
+  onCardClick: (a: Assignment) => void;
+}) {
+  if (viewMode !== "staff" || unassignedAssignments.length === 0) return null;
+  return (
+    <div className="border-b bg-amber-50/60 px-2 md:px-3 py-2">
+      <div className="flex items-center gap-2 mb-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+        <span className="text-xs font-semibold text-amber-800">
+          未割当 {unassignedAssignments.length}件
+        </span>
+        <span className="text-[10px] text-amber-700">
+          スタッフ行の空きセルにドラッグで配置できます
+        </span>
+        {dropAssigning && <span className="text-[10px] text-amber-700 animate-pulse">割当中...</span>}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {unassignedAssignments.map((a) => {
+          const dateRange =
+            a.startDate === a.endDate
+              ? format(parseISO(a.startDate || ""), "M/d", { locale: ja })
+              : `${format(parseISO(a.startDate || ""), "M/d", { locale: ja })}〜${format(parseISO(a.endDate || ""), "M/d", { locale: ja })}`;
+          const isDragging = draggingUnassignedId === a.id;
+          return (
+            <div
+              key={a.id}
+              draggable
+              onDragStart={(e) => {
+                onDragStart(a.id);
+                e.dataTransfer.setData("text/plain", String(a.id));
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragEnd={onDragEnd}
+              onClick={() => onCardClick(a)}
+              className={cn(
+                "cursor-grab active:cursor-grabbing select-none rounded-md border-2 border-dashed border-amber-500 bg-white px-2 py-1 shadow-sm",
+                "hover:bg-amber-100/60",
+                isDragging && "opacity-40 ring-2 ring-amber-400",
+              )}
+              style={{
+                borderLeftWidth: "4px",
+                borderLeftStyle: "solid",
+                borderLeftColor: a.jobSite.branchOffice.color,
+              }}
+              title={`${a.jobSite.name}（${dateRange}）— ドラッグでスタッフセルへ配置`}
+            >
+              <div className="text-[11px] font-medium text-amber-900 leading-tight">
+                {a.jobSite.name}
+              </div>
+              <div className="text-[9px] text-amber-700 leading-tight tabular-nums">
+                {dateRange} · {a.startTime}〜{a.endTime}
+                {a.shiftType === "night" && <span className="ml-1">🌙</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+});

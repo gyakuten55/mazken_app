@@ -71,7 +71,25 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
   }
-  const { staffId, jobSiteId, vehicleId, startDate, endDate, assignmentType, shiftType, startTime, endTime, dailyRateOverride, notes, force } = parsed.data;
+  const {
+    staffId,
+    jobSiteId,
+    vehicleId,
+    startDate,
+    endDate,
+    assignmentType,
+    shiftType,
+    startTime,
+    endTime,
+    dailyRateOverride,
+    belongings,
+    contactName,
+    contactTel,
+    transportation,
+    notes,
+    allowances,
+    force,
+  } = parsed.data;
 
   // Generate individual day records（日曜も含む。休みは日別トグルで管理）
   const dates: string[] = [];
@@ -82,17 +100,26 @@ export async function POST(request: NextRequest) {
     cur.setDate(cur.getDate() + 1);
   }
 
-  // --- Conflict & Insurance Check ---
-  // 未割当（staffId == null）はスタッフ依存のチェックをスキップ
-  if (!force && dates.length > 0 && staffId != null) {
-    const { conflicts, insuranceWarning } = await checkAssignmentConflicts({
-      staffId,
+  // --- Conflict & Insurance & Vehicle Check ---
+  if (!force && dates.length > 0) {
+    const { conflicts, insuranceWarning, vehicleConflicts } = await checkAssignmentConflicts({
+      staffId: staffId ?? null,
       jobSiteId,
       dates,
+      vehicleId,
     });
-    if (conflicts.length > 0 || insuranceWarning) {
+    if (
+      conflicts.length > 0 ||
+      insuranceWarning ||
+      (vehicleConflicts && vehicleConflicts.length > 0)
+    ) {
       return NextResponse.json(
-        { hasWarnings: true, conflicts, insuranceWarning },
+        {
+          hasWarnings: true,
+          conflicts,
+          insuranceWarning,
+          vehicleConflicts: vehicleConflicts ?? [],
+        },
         { status: 409 }
       );
     }
@@ -110,6 +137,10 @@ export async function POST(request: NextRequest) {
       startTime: startTime || "08:00",
       endTime: endTime || "18:00",
       dailyRateOverride: dailyRateOverride ?? null,
+      belongings: belongings ?? null,
+      contactName: contactName ?? null,
+      contactTel: contactTel ?? null,
+      transportation: transportation ?? null,
       notes,
       assignmentDays: {
         create: dates.map((date) => ({
@@ -117,12 +148,24 @@ export async function POST(request: NextRequest) {
           status: "scheduled",
         })),
       },
+      ...(allowances && allowances.length > 0
+        ? {
+            allowances: {
+              create: allowances.map((a) => ({
+                name: a.name,
+                amount: a.amount,
+                category: a.category,
+              })),
+            },
+          }
+        : {}),
     },
     include: {
       staff: { include: { branchOffice: true } },
       jobSite: true,
       vehicle: true,
       assignmentDays: { orderBy: { date: "asc" } },
+      allowances: true,
     },
   });
 

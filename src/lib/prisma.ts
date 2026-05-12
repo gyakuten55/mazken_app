@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
 import { getAuditActor, type AuditActor } from "./audit-context";
 
 const AUDITED_MODELS = new Set([
@@ -71,7 +72,21 @@ async function resolveActorFromCookies(): Promise<AuditActor> {
   }
 }
 
-const basePrisma = new PrismaClient();
+// 本番（Vercel + Turso）と開発（ローカル SQLite ファイル）の二刀流。
+// TURSO_DATABASE_URL があれば libSQL adapter 経由、なければローカルファイル DB。
+function buildPrisma(): PrismaClient {
+  const tursoUrl = process.env.TURSO_DATABASE_URL;
+  if (tursoUrl) {
+    const adapter = new PrismaLibSQL({
+      url: tursoUrl,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    });
+    return new PrismaClient({ adapter });
+  }
+  return new PrismaClient();
+}
+
+const basePrisma = buildPrisma();
 
 function createPrisma() {
   return basePrisma.$extends({
