@@ -1,6 +1,6 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 import { PrismaLibSQL } from "@prisma/adapter-libsql";
-import { getAuditActor, type AuditActor } from "./audit-context";
+import { getAuditActor } from "./audit-context";
 
 const AUDITED_MODELS = new Set([
   "Assignment",
@@ -50,28 +50,6 @@ function safeJson(value: unknown): string | null {
   }
 }
 
-async function resolveActorFromCookies(): Promise<AuditActor> {
-  try {
-    // Dynamic imports so this module still works in non-request contexts (seed, scripts).
-    const { cookies } = await import("next/headers");
-    const { getIronSession } = await import("iron-session");
-    const { sessionOptions } = await import("./session");
-    const session = await getIronSession<{ userId?: number }>(
-      await cookies(),
-      sessionOptions,
-    );
-    if (!session.userId) return { userId: null, username: null };
-    const user = await basePrisma.user.findUnique({
-      where: { id: session.userId },
-      select: { id: true, username: true, isActive: true },
-    });
-    if (!user || !user.isActive) return { userId: null, username: null };
-    return { userId: user.id, username: user.username };
-  } catch {
-    return { userId: null, username: null };
-  }
-}
-
 // 本番（Vercel + Turso）と開発（ローカル SQLite ファイル）の二刀流。
 // TURSO_DATABASE_URL があれば libSQL adapter 経由、なければローカルファイル DB。
 function buildPrisma(): PrismaClient {
@@ -103,10 +81,11 @@ function createPrisma() {
           const result = await query(args);
 
           if (shouldAudit) {
-            let actor = getAuditActor();
-            if (actor.userId === null) {
-              actor = await resolveActorFromCookies();
-            }
+            // libSQL HTTP adapter ではクエリが直列実行されるため、
+            // トランザクション中に basePrisma.user.findUnique() を呼ぶとデッドロックする。
+            // setAuditActor() で AsyncLocalStorage に積まれた actor のみ使い、
+            // 未設定なら audit log の userId/username は null で記録する。
+            const actor = getAuditActor();
             const recordId = extractRecordId(result);
             const diff = safeJson({ args, result });
             basePrisma.auditLog
