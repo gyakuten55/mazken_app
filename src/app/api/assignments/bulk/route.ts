@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
   }
 
   const cleanAllowances = (allowances ?? []).filter((a) => a.name.trim() && a.amount > 0);
+  // Turso などリモート DB ではレイテンシでデフォルト 5 秒タイムアウトに収まらない。
   const results = await prisma.$transaction(async (tx) => {
     const created = [];
     for (const staffId of staffIds) {
@@ -186,7 +187,7 @@ export async function POST(request: NextRequest) {
       created.push(a);
     }
     return created;
-  });
+  }, { timeout: 30000, maxWait: 10000 });
 
   return NextResponse.json(
     {
