@@ -309,4 +309,22 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
       data: toCreate,
     });
   }
+
+  // 配置が無くなったスタッフの自動生成レコードを掃除する。
+  // 「シード由来のレコードかどうか」は判別困難なので、その日の調整系フィールド
+  // (advanceOffset / otherOffset / notes) が手付かずの行を削除候補とする。
+  // 配置を消した直後に日計表に残り続ける問題への対応。
+  const staffIdsWithAssignments = Array.from(byStaff.keys());
+  await prisma.dailyPayment.deleteMany({
+    where: {
+      date,
+      ...(staffIdsWithAssignments.length > 0
+        ? { staffId: { notIn: staffIdsWithAssignments } }
+        : {}),
+      // 手入力された明示的な調整が残っていれば保持する
+      advanceOffset: 0,
+      otherOffset: 0,
+      OR: [{ notes: null }, { notes: "" }],
+    },
+  });
 }
