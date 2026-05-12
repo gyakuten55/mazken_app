@@ -11,8 +11,8 @@ const notoSansJP = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "マツケン配置管理",
-  description: "建設派遣スタッフ配置管理システム",
+  title: "スタッフ配置管理システム",
+  description: "スタッフ配置管理システム",
 };
 
 export default function RootLayout({

@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="matsken_export_${startDate}_${endDate}.csv"`,
+      "Content-Disposition": `attachment; filename="staff_assignment_export_${startDate}_${endDate}.csv"`,
     },
   });
 }

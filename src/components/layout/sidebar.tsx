@@ -96,10 +96,10 @@ export function Sidebar({
           {!collapsed && (
             <Link href="/calendar" className="leading-none">
               <div className="font-bold text-base text-sidebar-foreground">
-                マツケン
+                スタッフ配置
               </div>
               <div className="text-[11px] text-sidebar-foreground/60 mt-0.5">
-                配置管理システム
+                管理システム
               </div>
             </Link>
           )}

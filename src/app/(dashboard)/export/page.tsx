@@ -56,7 +56,7 @@ export default function ExportPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `matsken_export_${startDate}_${endDate}.csv`;
+        a.download = `staff_assignment_export_${startDate}_${endDate}.csv`;
         a.click();
         window.URL.revokeObjectURL(url);
         toast.success("CSVを出力しました");

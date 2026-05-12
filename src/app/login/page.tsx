@@ -51,11 +51,11 @@ export default function LoginPage() {
         </div>
         <div className="relative z-10 text-center px-8">
           <h1 className="text-white text-4xl font-bold tracking-tight">
-            マツケン
+            スタッフ配置
           </h1>
-          <p className="text-white/80 text-xl mt-3">配置管理システム</p>
+          <p className="text-white/80 text-xl mt-3">管理システム</p>
           <div className="mt-10 text-white/50 text-base max-w-xs mx-auto leading-relaxed">
-            建設派遣スタッフの配置・現場管理を
+            スタッフの配置・現場管理を
             <br />
             シンプルに、確実に。
           </div>
@@ -67,9 +67,9 @@ export default function LoginPage() {
         <div className="w-full max-w-sm space-y-8">
           {/* Mobile title */}
           <div className="md:hidden text-center">
-            <h1 className="font-bold text-2xl">マツケン配置管理</h1>
+            <h1 className="font-bold text-2xl">スタッフ配置管理システム</h1>
             <p className="text-base text-muted-foreground mt-1">
-              建設派遣スタッフ配置管理
+              ログイン
             </p>
           </div>
 

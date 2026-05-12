@@ -64,8 +64,8 @@ export function MobileNav({ userRole }: { userRole: string }) {
       {/* Top bar - simple title only */}
       <header className="md:hidden flex items-center h-14 px-4 border-b bg-sidebar text-sidebar-foreground fixed top-0 left-0 right-0 z-50">
         <div className="leading-none">
-          <span className="font-bold text-base">マツケン</span>
-          <span className="text-xs text-sidebar-foreground/60 ml-2">配置管理</span>
+          <span className="font-bold text-base">スタッフ配置</span>
+          <span className="text-xs text-sidebar-foreground/60 ml-2">管理システム</span>
         </div>
       </header>
 
