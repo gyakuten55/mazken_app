@@ -73,7 +73,7 @@ export async function PUT(
         staffQualifications: { include: { qualification: true } },
       },
     });
-  });
+  }, { timeout: 30000, maxWait: 10000 });
 
   return NextResponse.json(staff);
 }

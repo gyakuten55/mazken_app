@@ -105,7 +105,7 @@ export async function POST(
         });
       }
     }
-  });
+  }, { timeout: 30000, maxWait: 10000 });
 
   const assignment = await prisma.assignment.findUnique({
     where: { id: assignmentId },

@@ -125,7 +125,7 @@ export async function PUT(
         allowances: { orderBy: { id: "asc" } },
       },
     });
-  });
+  }, { timeout: 30000, maxWait: 10000 });
 
   return NextResponse.json(assignment);
 }

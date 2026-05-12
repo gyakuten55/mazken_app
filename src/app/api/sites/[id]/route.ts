@@ -97,7 +97,7 @@ export async function PUT(
         qualificationBonuses: { include: { qualification: true } },
       },
     });
-  });
+  }, { timeout: 30000, maxWait: 10000 });
   return NextResponse.json(site);
 }
 
