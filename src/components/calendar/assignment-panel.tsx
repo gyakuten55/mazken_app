@@ -278,6 +278,126 @@ function SiteMap({
   );
 }
 
+/**
+ * 加算手当リスト + 対象スタッフ選択。
+ * 選択中スタッフが 2 人以上のとき、各手当に「対象」ボタンが出る。
+ * 1 人のときは対象選択は不要なので非表示にする。
+ */
+function AllowanceList({
+  allowances,
+  selectedStaffIds,
+  allStaff,
+  openTargetIdx,
+  setOpenTargetIdx,
+  updateAllowance,
+  removeAllowance,
+  toggleAllowanceTarget,
+}: {
+  allowances: AssignmentAllowance[];
+  selectedStaffIds: number[];
+  allStaff: StaffInfo[];
+  openTargetIdx: number | null;
+  setOpenTargetIdx: (n: number | null) => void;
+  updateAllowance: (idx: number, patch: Partial<AssignmentAllowance>) => void;
+  removeAllowance: (idx: number) => void;
+  toggleAllowanceTarget: (idx: number, staffId: number) => void;
+}) {
+  // 選択中スタッフ ID → 表示名 / 営業所色 を引けるマップ
+  const staffMap = new Map(allStaff.map((s) => [s.id, s]));
+  const showTargetUI = selectedStaffIds.length >= 2;
+  return (
+    <>
+      {allowances.map((a, idx) => {
+        const isAll = !a.targetStaffIds || a.targetStaffIds.length === 0;
+        const targetCount = isAll ? selectedStaffIds.length : a.targetStaffIds!.length;
+        const isOpen = openTargetIdx === idx;
+        return (
+          <div key={idx} className={cn("space-y-1.5", showTargetUI && "rounded-md border border-border/60 p-2")}>
+            <div className="flex items-center gap-1.5">
+              <Input
+                value={a.name}
+                onChange={(e) => updateAllowance(idx, { name: e.target.value })}
+                placeholder="名称（例: 路内手当）"
+                className="text-xs h-8 flex-1"
+              />
+              <select
+                value={a.category}
+                onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
+                className="text-xs h-8 px-1 rounded border bg-background"
+              >
+                {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
+                  <option key={k} value={k}>{label}</option>
+                ))}
+              </select>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={100}
+                value={a.amount === 0 ? "" : String(a.amount)}
+                onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                placeholder="円"
+                className="text-xs h-8 w-20"
+              />
+              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+            {showTargetUI && (
+              <>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setOpenTargetIdx(isOpen ? null : idx)}
+                    className={cn(
+                      "px-2 py-0.5 rounded border text-[10px] font-medium",
+                      isAll ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary border-primary/30"
+                    )}
+                  >
+                    対象: {isAll ? `全員 (${targetCount}名)` : `${targetCount} / ${selectedStaffIds.length}名`} {isOpen ? "▲" : "▼"}
+                  </button>
+                  {!isAll && (
+                    <button
+                      type="button"
+                      onClick={() => updateAllowance(idx, { targetStaffIds: [] })}
+                      className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      全員に戻す
+                    </button>
+                  )}
+                </div>
+                {isOpen && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 p-2 rounded bg-muted/30">
+                    {selectedStaffIds.map((sid) => {
+                      const s = staffMap.get(sid);
+                      if (!s) return null;
+                      const checked = isAll || (a.targetStaffIds ?? []).includes(sid);
+                      return (
+                        <label key={sid} className="flex items-center gap-1 text-[11px] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleAllowanceTarget(idx, sid)}
+                          />
+                          <span
+                            className="inline-block w-1.5 h-1.5 rounded-full"
+                            style={{ backgroundColor: s.branchOffice.color }}
+                          />
+                          {s.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function PreDeclineSection({
   existingAssignment,
   displayAssignment,
@@ -607,10 +727,8 @@ export function AssignmentPanel({
   }, [form.jobSiteId, sites, isEdit]);
 
   // スタッフ一覧の取得:
-  //   - needsStaffSelection (site-mode / unassigned-edit) では従来通り
-  //   - 新規作成モード（staff-mode 含む）でも複数選択用に一覧を取得（議事録「配置複数人選択」）
-  // 既存配置の編集（特定スタッフ単体）は対象外
-  const needsStaffList = needsStaffSelection || !isEdit;
+  //   - 編集モードでも MultiStaffPicker を表示するため全モードで取得する。
+  const needsStaffList = true;
   useEffect(() => {
     if (!needsStaffList) return;
     const startDate =
@@ -652,7 +770,15 @@ export function AssignmentPanel({
         : null;
       const cleanAllowances = allowances
         .filter((a) => a.name.trim() && a.amount > 0)
-        .map((a) => ({ name: a.name.trim(), amount: a.amount, category: a.category }));
+        .map((a) => ({
+          name: a.name.trim(),
+          amount: a.amount,
+          category: a.category,
+          // targetStaffIds は bulk 適用時のみ意味を持つ。空 / 未指定なら全員。
+          ...(a.targetStaffIds && a.targetStaffIds.length > 0
+            ? { targetStaffIds: a.targetStaffIds }
+            : {}),
+        }));
 
       // 共通ペイロード
       const sharedPayload = {
@@ -727,7 +853,15 @@ export function AssignmentPanel({
         : null;
       const cleanAllowances = allowances
         .filter((a) => a.name.trim() && a.amount > 0)
-        .map((a) => ({ name: a.name.trim(), amount: a.amount, category: a.category }));
+        .map((a) => ({
+          name: a.name.trim(),
+          amount: a.amount,
+          category: a.category,
+          // targetStaffIds は bulk 適用時のみ意味を持つ。空 / 未指定なら全員。
+          ...(a.targetStaffIds && a.targetStaffIds.length > 0
+            ? { targetStaffIds: a.targetStaffIds }
+            : {}),
+        }));
 
       // 編集モードでは selectedStaffIds の先頭が「このカードのスタッフ」、
       // それ以降が「同条件で追加配置する新規 Assignment 用」のスタッフ。
@@ -889,11 +1023,32 @@ export function AssignmentPanel({
   // 手当の編集ヘルパ
   function addAllowance(preset?: { name: string; category: "special" | "other"; defaultAmount: number }) {
     if (preset) {
-      setAllowances((prev) => [...prev, { name: preset.name, amount: preset.defaultAmount, category: preset.category }]);
+      setAllowances((prev) => [...prev, { name: preset.name, amount: preset.defaultAmount, category: preset.category, targetStaffIds: [] }]);
     } else {
-      setAllowances((prev) => [...prev, { name: "", amount: 0, category: "special" }]);
+      setAllowances((prev) => [...prev, { name: "", amount: 0, category: "special", targetStaffIds: [] }]);
     }
   }
+  // 加算手当の対象スタッフトグル（複数選択中のみ意味を持つ）
+  function toggleAllowanceTarget(idx: number, staffId: number) {
+    setAllowances((prev) =>
+      prev.map((a, i) => {
+        if (i !== idx) return a;
+        const currentTargets = (a.targetStaffIds && a.targetStaffIds.length > 0)
+          ? a.targetStaffIds
+          : selectedStaffIds; // 空 = 全員 を実体化
+        const next = currentTargets.includes(staffId)
+          ? currentTargets.filter((id) => id !== staffId)
+          : [...currentTargets, staffId];
+        // 全員選択中なら空に戻して「全員」表現
+        const isAll = selectedStaffIds.length > 0
+          && selectedStaffIds.every((id) => next.includes(id))
+          && next.length === selectedStaffIds.length;
+        return { ...a, targetStaffIds: isAll ? [] : next };
+      })
+    );
+  }
+  // 開いている対象選択 UI の index
+  const [openTargetIdx, setOpenTargetIdx] = useState<number | null>(null);
   function updateAllowance(idx: number, patch: Partial<AssignmentAllowance>) {
     setAllowances((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
   }
@@ -1383,38 +1538,16 @@ export function AssignmentPanel({
               <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <Coins className="h-3 w-3" /> 加算手当
               </Label>
-              {allowances.map((a, idx) => (
-                <div key={idx} className="flex items-center gap-1.5">
-                  <Input
-                    value={a.name}
-                    onChange={(e) => updateAllowance(idx, { name: e.target.value })}
-                    placeholder="名称（例: 路内手当）"
-                    className="text-xs h-8 flex-1"
-                  />
-                  <select
-                    value={a.category}
-                    onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
-                    className="text-xs h-8 px-1 rounded border bg-background"
-                  >
-                    {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
-                      <option key={k} value={k}>{label}</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    step={100}
-                    value={a.amount === 0 ? "" : String(a.amount)}
-                    onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                    placeholder="円"
-                    className="text-xs h-8 w-20"
-                  />
-                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
+              <AllowanceList
+                allowances={allowances}
+                selectedStaffIds={selectedStaffIds}
+                allStaff={allStaff}
+                openTargetIdx={openTargetIdx}
+                setOpenTargetIdx={setOpenTargetIdx}
+                updateAllowance={updateAllowance}
+                removeAllowance={removeAllowance}
+                toggleAllowanceTarget={toggleAllowanceTarget}
+              />
               <div className="flex flex-wrap gap-1">
                 {ALLOWANCE_PRESETS.map((p) => (
                   <Button
@@ -1829,38 +1962,16 @@ export function AssignmentPanel({
               <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <Coins className="h-3 w-3" /> 加算手当
               </Label>
-              {allowances.map((a, idx) => (
-                <div key={idx} className="flex items-center gap-1.5">
-                  <Input
-                    value={a.name}
-                    onChange={(e) => updateAllowance(idx, { name: e.target.value })}
-                    placeholder="名称（例: 路内手当）"
-                    className="text-xs h-8 flex-1"
-                  />
-                  <select
-                    value={a.category}
-                    onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
-                    className="text-xs h-8 px-1 rounded border bg-background"
-                  >
-                    {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
-                      <option key={k} value={k}>{label}</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    step={100}
-                    value={a.amount === 0 ? "" : String(a.amount)}
-                    onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                    placeholder="円"
-                    className="text-xs h-8 w-20"
-                  />
-                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
+              <AllowanceList
+                allowances={allowances}
+                selectedStaffIds={selectedStaffIds}
+                allStaff={allStaff}
+                openTargetIdx={openTargetIdx}
+                setOpenTargetIdx={setOpenTargetIdx}
+                updateAllowance={updateAllowance}
+                removeAllowance={removeAllowance}
+                toggleAllowanceTarget={toggleAllowanceTarget}
+              />
               <div className="flex flex-wrap gap-1">
                 {ALLOWANCE_PRESETS.map((p) => (
                   <Button

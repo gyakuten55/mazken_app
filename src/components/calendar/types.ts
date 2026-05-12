@@ -9,6 +9,8 @@ export type AssignmentAllowance = {
   name: string;
   amount: number;
   category: "special" | "other";
+  // 一括 / 複数スタッフ作成時の対象。空配列 / 未指定 = 選択中スタッフ全員に適用。
+  targetStaffIds?: number[];
 };
 
 export type Assignment = {
