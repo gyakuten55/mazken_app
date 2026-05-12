@@ -93,6 +93,9 @@ const allowanceSchema = z.object({
   name: z.string().min(1, "手当名を入力してください"),
   amount: z.number().int().min(0),
   category: z.enum(["special", "other"]).default("special"),
+  // 一括配置で「この手当は一部スタッフだけに適用」したいときに使う。
+  // 空配列 / 未指定なら staffIds 全員に適用される。
+  targetStaffIds: z.array(positiveInt).optional(),
 });
 
 export const createAssignmentSchema = z.object({

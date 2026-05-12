@@ -284,8 +284,27 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
     notes: string | null;
   }> = [];
 
+  const toUpdate: Array<{
+    staffId: number;
+    site1Skill: number;
+    site1Other: number;
+    site2Skill: number;
+    site2Other: number;
+  }> = [];
+
   for (const [staffId, pair] of byStaff) {
-    if (existingStaffIds.has(staffId)) continue;
+    if (existingStaffIds.has(staffId)) {
+      // 既存行: 加算手当 (site*Skill / site*Other) は配置側の変更を反映して上書きする。
+      // 基本日給 / 運転 / 自社 / 追加 / 各種相殺は手入力の領域として保持。
+      toUpdate.push({
+        staffId,
+        site1Skill: pair.site1?.skillBonus ?? 0,
+        site1Other: pair.site1?.otherBonus ?? 0,
+        site2Skill: pair.site2?.skillBonus ?? 0,
+        site2Other: pair.site2?.otherBonus ?? 0,
+      });
+      continue;
+    }
     const lodging = residenceDailyCost(pair.residenceType);
     toCreate.push({
       date,
@@ -307,6 +326,18 @@ export async function seedDailyPaymentsForDate(date: string): Promise<void> {
   if (toCreate.length > 0) {
     await prisma.dailyPayment.createMany({
       data: toCreate,
+    });
+  }
+  // 既存行への加算手当の反映
+  for (const u of toUpdate) {
+    await prisma.dailyPayment.update({
+      where: { staffId_date: { staffId: u.staffId, date } },
+      data: {
+        site1Skill: u.site1Skill,
+        site1Other: u.site1Other,
+        site2Skill: u.site2Skill,
+        site2Other: u.site2Other,
+      },
     });
   }
 

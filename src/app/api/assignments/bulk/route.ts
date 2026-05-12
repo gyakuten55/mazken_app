@@ -149,10 +149,21 @@ export async function POST(request: NextRequest) {
   }
 
   const cleanAllowances = (allowances ?? []).filter((a) => a.name.trim() && a.amount > 0);
+  // 各スタッフに適用する手当を求めるヘルパ。
+  // targetStaffIds が空 / 未指定の手当は全員に適用、指定されているならそのスタッフだけ。
+  function allowancesFor(staffId: number) {
+    return cleanAllowances.filter((al) => {
+      const targets = al.targetStaffIds;
+      if (!targets || targets.length === 0) return true;
+      return targets.includes(staffId);
+    });
+  }
+
   // Turso などリモート DB ではレイテンシでデフォルト 5 秒タイムアウトに収まらない。
   const results = await prisma.$transaction(async (tx) => {
     const created = [];
     for (const staffId of staffIds) {
+      const staffAllowances = allowancesFor(staffId);
       const a = await tx.assignment.create({
         data: {
           staffId,
@@ -171,10 +182,10 @@ export async function POST(request: NextRequest) {
           transportation: transportation ?? null,
           notes: notes ?? null,
           assignmentDays: { create: dates.map((date) => ({ date, status: "scheduled" })) },
-          ...(cleanAllowances.length > 0
+          ...(staffAllowances.length > 0
             ? {
                 allowances: {
-                  create: cleanAllowances.map((al) => ({
+                  create: staffAllowances.map((al) => ({
                     name: al.name.trim(),
                     amount: al.amount,
                     category: al.category,

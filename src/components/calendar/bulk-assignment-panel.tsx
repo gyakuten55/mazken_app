@@ -15,6 +15,8 @@ type AllowanceInput = {
   name: string;
   amount: number;
   category: "special" | "other";
+  // 空配列 = 全員に適用。それ以外 = 指定スタッフだけに適用。
+  targetStaffIds: number[];
 };
 
 type JobSite = {
@@ -92,12 +94,14 @@ export function BulkAssignmentPanel({
   });
 
   const [allowances, setAllowances] = useState<AllowanceInput[]>([]);
+  // 対象選択 UI を開いている手当の index
+  const [openTargetIdx, setOpenTargetIdx] = useState<number | null>(null);
   const addAllowance = (preset?: { name: string; defaultAmount: number; category: "special" | "other" }) => {
     setAllowances((prev) => [
       ...prev,
       preset
-        ? { name: preset.name, amount: preset.defaultAmount, category: preset.category }
-        : { name: "", amount: 0, category: "other" },
+        ? { name: preset.name, amount: preset.defaultAmount, category: preset.category, targetStaffIds: [] }
+        : { name: "", amount: 0, category: "other", targetStaffIds: [] },
     ]);
   };
   const removeAllowance = (idx: number) => {
@@ -105,6 +109,24 @@ export function BulkAssignmentPanel({
   };
   const updateAllowance = (idx: number, patch: Partial<AllowanceInput>) => {
     setAllowances((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  };
+  // 対象スタッフのトグル。チェックを外す＝そのスタッフだけ除外する形にする
+  const toggleAllowanceTarget = (idx: number, staffId: number) => {
+    setAllowances((prev) =>
+      prev.map((a, i) => {
+        if (i !== idx) return a;
+        const currentTargets = a.targetStaffIds.length > 0
+          ? a.targetStaffIds
+          : selectedStaff.map((s) => s.id); // 空 = 全員 を実体化
+        const next = currentTargets.includes(staffId)
+          ? currentTargets.filter((id) => id !== staffId)
+          : [...currentTargets, staffId];
+        // 全員選択中なら空配列に戻して「全員適用」表現に統一
+        const allIds = selectedStaff.map((s) => s.id);
+        const isAll = allIds.every((id) => next.includes(id)) && next.length === allIds.length;
+        return { ...a, targetStaffIds: isAll ? [] : next };
+      })
+    );
   };
 
   // 現場が変わったら、現場マスタの belongings/transportation/担当者 を空欄に自動 prefill
@@ -147,7 +169,15 @@ export function BulkAssignmentPanel({
     }
     setLoading(true);
     try {
-      const cleanAllowances = allowances.filter((a) => a.name.trim() && a.amount > 0);
+      const cleanAllowances = allowances
+        .filter((a) => a.name.trim() && a.amount > 0)
+        .map((a) => ({
+          name: a.name.trim(),
+          amount: a.amount,
+          category: a.category,
+          // 全員適用は targetStaffIds 省略で送信（API は空/未指定を「全員」と解釈）
+          ...(a.targetStaffIds.length > 0 ? { targetStaffIds: a.targetStaffIds } : {}),
+        }));
       const dailyRate = form.dailyRateOverride.trim() ? Math.max(0, Math.floor(Number(form.dailyRateOverride) || 0)) : null;
       const res = await fetch("/api/assignments/bulk", {
         method: "POST",
@@ -437,38 +467,88 @@ export function BulkAssignmentPanel({
           <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
             <Coins className="h-3 w-3" /> 加算手当
           </Label>
-          {allowances.map((a, idx) => (
-            <div key={idx} className="flex items-center gap-1.5">
-              <Input
-                value={a.name}
-                onChange={(e) => updateAllowance(idx, { name: e.target.value })}
-                placeholder="名称（例: 路内手当）"
-                className="text-xs h-8 flex-1"
-              />
-              <select
-                value={a.category}
-                onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
-                className="text-xs h-8 px-1 rounded border bg-background"
-              >
-                {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
-                  <option key={k} value={k}>{label}</option>
-                ))}
-              </select>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={100}
-                value={a.amount === 0 ? "" : String(a.amount)}
-                onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                placeholder="円"
-                className="text-xs h-8 w-20"
-              />
-              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
+          {allowances.map((a, idx) => {
+            const isAll = a.targetStaffIds.length === 0;
+            const targetCount = isAll ? selectedStaff.length : a.targetStaffIds.length;
+            const isOpen = openTargetIdx === idx;
+            return (
+              <div key={idx} className="space-y-1.5 rounded-md border border-border/60 p-2">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    value={a.name}
+                    onChange={(e) => updateAllowance(idx, { name: e.target.value })}
+                    placeholder="名称（例: 路内手当）"
+                    className="text-xs h-8 flex-1"
+                  />
+                  <select
+                    value={a.category}
+                    onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
+                    className="text-xs h-8 px-1 rounded border bg-background"
+                  >
+                    {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                  </select>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={100}
+                    value={a.amount === 0 ? "" : String(a.amount)}
+                    onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                    placeholder="円"
+                    className="text-xs h-8 w-20"
+                  />
+                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+                {/* 対象スタッフ */}
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setOpenTargetIdx(isOpen ? null : idx)}
+                    className={cn(
+                      "px-2 py-0.5 rounded border text-[10px] font-medium",
+                      isAll ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary border-primary/30"
+                    )}
+                  >
+                    対象: {isAll ? `全員 (${targetCount}名)` : `${targetCount} / ${selectedStaff.length}名`} {isOpen ? "▲" : "▼"}
+                  </button>
+                  {!isAll && (
+                    <button
+                      type="button"
+                      onClick={() => updateAllowance(idx, { targetStaffIds: [] })}
+                      className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      全員に戻す
+                    </button>
+                  )}
+                </div>
+                {isOpen && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 p-2 rounded bg-muted/30">
+                    {selectedStaff.map((s) => {
+                      const checked = isAll || a.targetStaffIds.includes(s.id);
+                      return (
+                        <label key={s.id} className="flex items-center gap-1 text-[11px] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleAllowanceTarget(idx, s.id)}
+                          />
+                          <span
+                            className="inline-block w-1.5 h-1.5 rounded-full"
+                            style={{ backgroundColor: s.branchColor }}
+                          />
+                          {s.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           <div className="flex flex-wrap gap-1">
             {ALLOWANCE_PRESETS.map((p) => (
               <Button
