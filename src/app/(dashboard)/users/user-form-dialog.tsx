@@ -26,6 +26,8 @@ export type StaffOption = {
   id: number;
   name: string;
   employeeCode: string;
+  branchOfficeId?: number | null;
+  branchOffice?: { id: number; name: string; color: string } | null;
   linkedUser?: { id: number; name: string } | null;
 };
 
@@ -87,21 +89,46 @@ export function UserFormDialog({
 
   const isCreate = mode === "create";
 
+  // 作成モード: スタッフ選択時に username/name/branchOfficeId を自動入力
+  function handleStaffChange(staffId: string) {
+    if (!isCreate) {
+      setForm((p) => ({ ...p, staffId }));
+      return;
+    }
+    if (!staffId) {
+      // 解除した場合は自動入力もクリア
+      setForm((p) => ({ ...p, staffId: "", username: "", name: "", branchOfficeId: "" }));
+      return;
+    }
+    const staff = staffOptions.find((s) => String(s.id) === staffId);
+    if (!staff) {
+      setForm((p) => ({ ...p, staffId }));
+      return;
+    }
+    setForm((p) => ({
+      ...p,
+      staffId,
+      username: staff.employeeCode || p.username,
+      name: staff.name,
+      branchOfficeId: staff.branchOfficeId != null ? String(staff.branchOfficeId) : "",
+    }));
+  }
+
   async function handleSubmit() {
     if (isCreate) {
+      if (!form.staffId) {
+        toast.error("紐付けスタッフを選択してください");
+        return;
+      }
       if (!form.username || !form.password || !form.name) {
-        toast.error("ユーザー名・パスワード・名前は必須です");
+        toast.error("ユーザー名・表示名・パスワードは必須です");
         return;
       }
     } else {
       if (!form.name) {
-        toast.error("名前は必須です");
+        toast.error("表示名は必須です");
         return;
       }
-    }
-    if (form.role === "staff" && !form.staffId) {
-      toast.error("スタッフ権限の場合はスタッフの紐付けが必要です");
-      return;
     }
     await onSubmit(form);
   }
@@ -117,112 +144,22 @@ export function UserFormDialog({
         </DialogHeader>
         <div className="space-y-3 py-2">
           {isCreate ? (
-            <>
-              <div className="space-y-1.5">
-                <Label>ユーザー名（ログインID）*</Label>
-                <Input
-                  value={form.username}
-                  onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
-                  placeholder="e.g. admin2"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>パスワード *</Label>
-                <Input
-                  type="password"
-                  value={form.password}
-                  onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                  placeholder="4文字以上"
-                />
-              </div>
-            </>
-          ) : (
-            fixedUsername && (
-              <div className="text-xs text-muted-foreground">
-                ログインID: <span className="font-mono">{fixedUsername}</span>
-              </div>
-            )
-          )}
-          <div className="space-y-1.5">
-            <Label>{isCreate ? "表示名 *" : "表示名 *"}</Label>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-              placeholder="e.g. 山田 太郎"
+            <CreateBody
+              form={form}
+              setForm={setForm}
+              staffOptions={staffOptions}
+              branchOffices={branchOffices}
+              onStaffChange={handleStaffChange}
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>権限 *</Label>
-              <select
-                value={form.role}
-                onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
-                className="w-full h-9 rounded-md border px-2 text-sm bg-background"
-              >
-                {ROLE_OPTIONS.map(([k, label]) => (
-                  <option key={k} value={k}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>営業所</Label>
-              <select
-                value={form.branchOfficeId}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, branchOfficeId: e.target.value }))
-                }
-                className="w-full h-9 rounded-md border px-2 text-sm bg-background"
-              >
-                <option value="">—</option>
-                {branchOffices.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>
-              紐付けスタッフ {form.role === "staff" ? "*" : <span className="text-muted-foreground font-normal">(任意)</span>}
-            </Label>
-            <select
-              value={form.staffId}
-              onChange={(e) => setForm((p) => ({ ...p, staffId: e.target.value }))}
-              className="w-full h-9 rounded-md border px-2 text-sm bg-background"
-            >
-              <option value="">— 紐付けなし —</option>
-              {staffOptions.map((s) => {
-                // 編集中ユーザー自身が紐付けてるスタッフは「紐付け済」扱いにしない
-                const takenByOther =
-                  s.linkedUser && s.linkedUser.id !== editingUserId;
-                return (
-                  <option key={s.id} value={s.id} disabled={!!takenByOther}>
-                    {s.employeeCode ? `${s.employeeCode} ` : ""}
-                    {s.name}
-                    {takenByOther ? ` (${s.linkedUser!.name} に紐付け済)` : ""}
-                  </option>
-                );
-              })}
-            </select>
-            <p className="text-[10px] text-muted-foreground">
-              {form.role === "staff"
-                ? "スタッフ権限はカレンダーで自分の予定のみ閲覧できます"
-                : "ユーザーをスタッフ名簿の人物と紐付けます（任意）"}
-            </p>
-          </div>
-          {!isCreate && (
-            <div className="space-y-1.5">
-              <Label>パスワード（変更する場合のみ入力）</Label>
-              <Input
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                placeholder="4文字以上"
-              />
-            </div>
+          ) : (
+            <EditBody
+              form={form}
+              setForm={setForm}
+              staffOptions={staffOptions}
+              branchOffices={branchOffices}
+              editingUserId={editingUserId}
+              fixedUsername={fixedUsername}
+            />
           )}
         </div>
         <DialogFooter>
@@ -239,5 +176,225 @@ export function UserFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * 作成モード本体。
+ * 上から: ① スタッフ選択 → ② 権限 → ③ スタッフ情報からの自動入力欄 → ④ パスワード
+ */
+function CreateBody({
+  form,
+  setForm,
+  staffOptions,
+  branchOffices,
+  onStaffChange,
+}: {
+  form: UserFormValues;
+  setForm: React.Dispatch<React.SetStateAction<UserFormValues>>;
+  staffOptions: StaffOption[];
+  branchOffices: Branch[];
+  onStaffChange: (staffId: string) => void;
+}) {
+  const selectedStaff = staffOptions.find((s) => String(s.id) === form.staffId);
+
+  return (
+    <>
+      {/* ① スタッフ選択 + ② 権限 */}
+      <div className="grid grid-cols-1 gap-3">
+        <div className="space-y-1.5">
+          <Label>紐付けスタッフ *</Label>
+          <select
+            value={form.staffId}
+            onChange={(e) => onStaffChange(e.target.value)}
+            className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+          >
+            <option value="">— 選択してください —</option>
+            {staffOptions.map((s) => {
+              const taken = !!s.linkedUser;
+              return (
+                <option key={s.id} value={s.id} disabled={taken}>
+                  {s.employeeCode ? `${s.employeeCode} ` : ""}
+                  {s.name}
+                  {taken ? ` (${s.linkedUser!.name} に紐付け済)` : ""}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>権限 *</Label>
+          <select
+            value={form.role}
+            onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
+            className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+          >
+            {ROLE_OPTIONS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* ③ スタッフから自動入力された情報（編集可能） */}
+      {selectedStaff && (
+        <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2.5 space-y-2.5">
+          <p className="text-[10px] text-muted-foreground">
+            ↓ スタッフ情報から自動入力されました（必要なら編集可）
+          </p>
+          <div className="space-y-1.5">
+            <Label className="text-xs">ユーザー名（ログインID） *</Label>
+            <Input
+              value={form.username}
+              onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
+              placeholder="スタッフID"
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">表示名 *</Label>
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+              placeholder="スタッフ名"
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">営業所</Label>
+            <select
+              value={form.branchOfficeId}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, branchOfficeId: e.target.value }))
+              }
+              className="w-full h-8 rounded-md border px-2 text-sm bg-background"
+            >
+              <option value="">—</option>
+              {branchOffices.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* ④ パスワード（スタッフ選択後のみ表示） */}
+      {selectedStaff && (
+        <div className="space-y-1.5">
+          <Label>パスワード *</Label>
+          <Input
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+            placeholder="4文字以上"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * 編集モード本体。
+ * 既存ユーザーの全フィールドを編集可能にし、紐付けスタッフも変更可能。
+ */
+function EditBody({
+  form,
+  setForm,
+  staffOptions,
+  branchOffices,
+  editingUserId,
+  fixedUsername,
+}: {
+  form: UserFormValues;
+  setForm: React.Dispatch<React.SetStateAction<UserFormValues>>;
+  staffOptions: StaffOption[];
+  branchOffices: Branch[];
+  editingUserId?: number | null;
+  fixedUsername?: string;
+}) {
+  return (
+    <>
+      {fixedUsername && (
+        <div className="text-xs text-muted-foreground">
+          ログインID: <span className="font-mono">{fixedUsername}</span>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        <Label>表示名 *</Label>
+        <Input
+          value={form.name}
+          onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+          placeholder="e.g. 山田 太郎"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>権限 *</Label>
+          <select
+            value={form.role}
+            onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
+            className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+          >
+            {ROLE_OPTIONS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>営業所</Label>
+          <select
+            value={form.branchOfficeId}
+            onChange={(e) =>
+              setForm((p) => ({ ...p, branchOfficeId: e.target.value }))
+            }
+            className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+          >
+            <option value="">—</option>
+            {branchOffices.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label>紐付けスタッフ *</Label>
+        <select
+          value={form.staffId}
+          onChange={(e) => setForm((p) => ({ ...p, staffId: e.target.value }))}
+          className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+        >
+          <option value="">— 紐付けなし —</option>
+          {staffOptions.map((s) => {
+            const takenByOther =
+              s.linkedUser && s.linkedUser.id !== editingUserId;
+            return (
+              <option key={s.id} value={s.id} disabled={!!takenByOther}>
+                {s.employeeCode ? `${s.employeeCode} ` : ""}
+                {s.name}
+                {takenByOther ? ` (${s.linkedUser!.name} に紐付け済)` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+      <div className="space-y-1.5">
+        <Label>パスワード（変更する場合のみ入力）</Label>
+        <Input
+          type="password"
+          value={form.password}
+          onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+          placeholder="4文字以上"
+        />
+      </div>
+    </>
   );
 }

@@ -23,6 +23,8 @@ export default async function UsersPage() {
         id: true,
         name: true,
         employeeCode: true,
+        branchOfficeId: true,
+        branchOffice: { select: { id: true, name: true, color: true } },
         user: { select: { id: true, name: true } },
       },
       orderBy: { employeeCode: "asc" },
@@ -59,6 +61,8 @@ export default async function UsersPage() {
             id: s.id,
             name: s.name,
             employeeCode: s.employeeCode,
+            branchOfficeId: s.branchOfficeId,
+            branchOffice: s.branchOffice ?? null,
             linkedUser: s.user ?? null,
           }))}
           currentUserId={session.id}
