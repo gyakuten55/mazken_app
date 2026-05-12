@@ -1333,6 +1333,113 @@ export function AssignmentPanel({
               />
             </div>
 
+            {/* 持ち物 */}
+            <div>
+              <Label className="text-[11px] text-muted-foreground mb-1.5">持ち物</Label>
+              <Textarea
+                value={form.belongings}
+                onChange={(e) => setForm((p) => ({ ...p, belongings: e.target.value }))}
+                rows={2}
+                placeholder="ヘルメット、安全靴、手袋 …（現場マスタから自動 prefill）"
+                className="text-xs"
+              />
+            </div>
+
+            {/* 担当者 + 電話番号 */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1.5">担当者</Label>
+                <Input
+                  value={form.contactName}
+                  onChange={(e) => setForm((p) => ({ ...p, contactName: e.target.value }))}
+                  className="text-xs h-9"
+                  placeholder="現場担当者"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1.5">電話番号</Label>
+                <Input
+                  value={form.contactTel}
+                  onChange={(e) => setForm((p) => ({ ...p, contactTel: e.target.value }))}
+                  className="text-xs h-9"
+                  placeholder="090-..."
+                />
+              </div>
+            </div>
+
+            {/* 交通手段 */}
+            <div>
+              <Label className="text-[11px] text-muted-foreground mb-1.5">交通手段</Label>
+              <Input
+                value={form.transportation}
+                onChange={(e) => setForm((p) => ({ ...p, transportation: e.target.value }))}
+                className="text-xs h-9"
+                placeholder="例: 自家用車、電車、現場集合（現場マスタから自動 prefill）"
+              />
+            </div>
+
+            {/* 加算手当 */}
+            <div className="space-y-2">
+              <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Coins className="h-3 w-3" /> 加算手当
+              </Label>
+              {allowances.map((a, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <Input
+                    value={a.name}
+                    onChange={(e) => updateAllowance(idx, { name: e.target.value })}
+                    placeholder="名称（例: 路内手当）"
+                    className="text-xs h-8 flex-1"
+                  />
+                  <select
+                    value={a.category}
+                    onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
+                    className="text-xs h-8 px-1 rounded border bg-background"
+                  >
+                    {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                  </select>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={100}
+                    value={a.amount === 0 ? "" : String(a.amount)}
+                    onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                    placeholder="円"
+                    className="text-xs h-8 w-20"
+                  />
+                  <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+              <div className="flex flex-wrap gap-1">
+                {ALLOWANCE_PRESETS.map((p) => (
+                  <Button
+                    key={p.name}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px]"
+                    onClick={() => addAllowance(p)}
+                  >
+                    + {p.name}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px]"
+                  onClick={() => addAllowance()}
+                >
+                  + 自由入力
+                </Button>
+              </div>
+            </div>
+
             <div>
               <Label className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                 <StickyNote className="h-3 w-3" /> 備考
