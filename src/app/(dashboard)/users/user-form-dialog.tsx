@@ -26,6 +26,7 @@ export type StaffOption = {
   id: number;
   name: string;
   employeeCode: string;
+  linkedUser?: { id: number; name: string } | null;
 };
 
 export type UserFormValues = {
@@ -57,6 +58,7 @@ export function UserFormDialog({
   onOpenChange,
   branchOffices,
   staffOptions,
+  editingUserId,
   initialValues,
   fixedUsername,
   onSubmit,
@@ -67,6 +69,8 @@ export function UserFormDialog({
   onOpenChange: (open: boolean) => void;
   branchOffices: Branch[];
   staffOptions: StaffOption[];
+  /** 編集中ユーザーの id。これと紐付いている staff はその人が選択中なので「紐付け済」表示を出さない */
+  editingUserId?: number | null;
   initialValues?: Partial<UserFormValues>;
   fixedUsername?: string;
   onSubmit: (values: UserFormValues) => Promise<void>;
@@ -152,13 +156,7 @@ export function UserFormDialog({
               <Label>権限 *</Label>
               <select
                 value={form.role}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    role: e.target.value,
-                    staffId: e.target.value === "staff" ? p.staffId : "",
-                  }))
-                }
+                onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
                 className="w-full h-9 rounded-md border px-2 text-sm bg-background"
               >
                 {ROLE_OPTIONS.map(([k, label]) => (
@@ -186,29 +184,35 @@ export function UserFormDialog({
               </select>
             </div>
           </div>
-          {form.role === "staff" && (
-            <div className="space-y-1.5">
-              <Label>紐付けスタッフ *</Label>
-              <select
-                value={form.staffId}
-                onChange={(e) => setForm((p) => ({ ...p, staffId: e.target.value }))}
-                className="w-full h-9 rounded-md border px-2 text-sm bg-background"
-              >
-                <option value="">選択してください</option>
-                {staffOptions.map((s) => (
-                  <option key={s.id} value={s.id}>
+          <div className="space-y-1.5">
+            <Label>
+              紐付けスタッフ {form.role === "staff" ? "*" : <span className="text-muted-foreground font-normal">(任意)</span>}
+            </Label>
+            <select
+              value={form.staffId}
+              onChange={(e) => setForm((p) => ({ ...p, staffId: e.target.value }))}
+              className="w-full h-9 rounded-md border px-2 text-sm bg-background"
+            >
+              <option value="">— 紐付けなし —</option>
+              {staffOptions.map((s) => {
+                // 編集中ユーザー自身が紐付けてるスタッフは「紐付け済」扱いにしない
+                const takenByOther =
+                  s.linkedUser && s.linkedUser.id !== editingUserId;
+                return (
+                  <option key={s.id} value={s.id} disabled={!!takenByOther}>
                     {s.employeeCode ? `${s.employeeCode} ` : ""}
                     {s.name}
+                    {takenByOther ? ` (${s.linkedUser!.name} に紐付け済)` : ""}
                   </option>
-                ))}
-              </select>
-              {isCreate && (
-                <p className="text-[10px] text-muted-foreground">
-                  スタッフ権限はカレンダーで自分の予定のみ閲覧できます
-                </p>
-              )}
-            </div>
-          )}
+                );
+              })}
+            </select>
+            <p className="text-[10px] text-muted-foreground">
+              {form.role === "staff"
+                ? "スタッフ権限はカレンダーで自分の予定のみ閲覧できます"
+                : "ユーザーをスタッフ名簿の人物と紐付けます（任意）"}
+            </p>
+          </div>
           {!isCreate && (
             <div className="space-y-1.5">
               <Label>パスワード（変更する場合のみ入力）</Label>

@@ -382,6 +382,7 @@ export function UsersManager({
         onOpenChange={(open) => !open && setEditing(null)}
         branchOffices={branchOffices}
         staffOptions={editStaffOptions}
+        editingUserId={editing?.id ?? null}
         initialValues={editInitialValues}
         fixedUsername={editing?.username}
         onSubmit={handleUpdate}

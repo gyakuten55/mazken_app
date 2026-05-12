@@ -15,9 +15,16 @@ export default async function UsersPage() {
       orderBy: { id: "asc" },
     }),
     prisma.branchOffice.findMany({ orderBy: { sortOrder: "asc" } }),
+    // 編集時に「現在紐付いているスタッフ」も選択肢に出すため、user: null フィルタを外す。
+    // user の name も含めて取り、UI で「(誰々に紐付け済)」と表示できるようにする。
     prisma.staff.findMany({
-      where: { isActive: true, user: null },
-      select: { id: true, name: true, employeeCode: true },
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        employeeCode: true,
+        user: { select: { id: true, name: true } },
+      },
       orderBy: { employeeCode: "asc" },
     }),
   ]);
@@ -48,7 +55,12 @@ export default async function UsersPage() {
         <UsersManager
           initialUsers={payload}
           branchOffices={branchOffices}
-          availableStaff={staff}
+          availableStaff={staff.map((s) => ({
+            id: s.id,
+            name: s.name,
+            employeeCode: s.employeeCode,
+            linkedUser: s.user ?? null,
+          }))}
           currentUserId={session.id}
         />
       </div>
