@@ -4,17 +4,29 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { X, MapPin, Clock, Sun, Moon, Truck } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { X, MapPin, Clock, Sun, Moon, Truck, Coins, StickyNote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { ASSIGNMENT_TYPES } from "@/lib/constants";
+import { ASSIGNMENT_TYPES, ALLOWANCE_PRESETS, ALLOWANCE_CATEGORIES } from "@/lib/constants";
 import { SiteSelect } from "@/components/sites/site-select";
+
+type AllowanceInput = {
+  name: string;
+  amount: number;
+  category: "special" | "other";
+};
 
 type JobSite = {
   id: number;
   name: string;
   siteCode: string;
   branchOffice: { color: string; name: string };
+  // 現場マスタからの自動 prefill 用
+  belongings?: string | null;
+  transportation?: string | null;
+  contactName1?: string | null;
+  contactTel1?: string | null;
 };
 
 type SelectedStaff = {
@@ -56,6 +68,12 @@ export function BulkAssignmentPanel({
     shiftType: string;
     startTime: string;
     endTime: string;
+    dailyRateOverride: string;
+    belongings: string;
+    contactName: string;
+    contactTel: string;
+    transportation: string;
+    notes: string;
   }>({
     jobSiteId: 0,
     vehicleId: null,
@@ -65,7 +83,43 @@ export function BulkAssignmentPanel({
     shiftType: "day",
     startTime: "08:00",
     endTime: "18:00",
+    dailyRateOverride: "",
+    belongings: "",
+    contactName: "",
+    contactTel: "",
+    transportation: "",
+    notes: "",
   });
+
+  const [allowances, setAllowances] = useState<AllowanceInput[]>([]);
+  const addAllowance = (preset?: { name: string; defaultAmount: number; category: "special" | "other" }) => {
+    setAllowances((prev) => [
+      ...prev,
+      preset
+        ? { name: preset.name, amount: preset.defaultAmount, category: preset.category }
+        : { name: "", amount: 0, category: "other" },
+    ]);
+  };
+  const removeAllowance = (idx: number) => {
+    setAllowances((prev) => prev.filter((_, i) => i !== idx));
+  };
+  const updateAllowance = (idx: number, patch: Partial<AllowanceInput>) => {
+    setAllowances((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  };
+
+  // 現場が変わったら、現場マスタの belongings/transportation/担当者 を空欄に自動 prefill
+  useEffect(() => {
+    if (!form.jobSiteId) return;
+    const site = sites.find((s) => s.id === form.jobSiteId);
+    if (!site) return;
+    setForm((p) => ({
+      ...p,
+      belongings: p.belongings || site.belongings || "",
+      transportation: p.transportation || site.transportation || "",
+      contactName: p.contactName || site.contactName1 || "",
+      contactTel: p.contactTel || site.contactTel1 || "",
+    }));
+  }, [form.jobSiteId, sites]);
 
   useEffect(() => {
     fetch("/api/sites?status=active")
@@ -93,6 +147,8 @@ export function BulkAssignmentPanel({
     }
     setLoading(true);
     try {
+      const cleanAllowances = allowances.filter((a) => a.name.trim() && a.amount > 0);
+      const dailyRate = form.dailyRateOverride.trim() ? Math.max(0, Math.floor(Number(form.dailyRateOverride) || 0)) : null;
       const res = await fetch("/api/assignments/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,6 +156,13 @@ export function BulkAssignmentPanel({
           staffIds: selectedStaff.map((s) => s.id),
           ...form,
           vehicleId: form.vehicleId ?? null,
+          dailyRateOverride: dailyRate,
+          belongings: form.belongings || null,
+          contactName: form.contactName || null,
+          contactTel: form.contactTel || null,
+          transportation: form.transportation || null,
+          notes: form.notes || null,
+          allowances: cleanAllowances,
         }),
       });
       if (res.ok) {
@@ -305,6 +368,144 @@ export function BulkAssignmentPanel({
               </option>
             ))}
           </select>
+        </div>
+
+        {/* 現場別日給 (上書き) */}
+        <div>
+          <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+            <Coins className="h-3 w-3" /> 現場別日給 (上書き)
+          </Label>
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={100}
+            placeholder="空欄=スタッフ基本日当を使用"
+            value={form.dailyRateOverride}
+            onChange={(e) => setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))}
+            className="text-xs h-9"
+          />
+        </div>
+
+        {/* 持ち物 */}
+        <div>
+          <Label className="text-[11px] text-muted-foreground mb-1.5">持ち物</Label>
+          <Textarea
+            value={form.belongings}
+            onChange={(e) => setForm((p) => ({ ...p, belongings: e.target.value }))}
+            rows={2}
+            placeholder="ヘルメット、安全靴、手袋 …（現場マスタから自動 prefill）"
+            className="text-xs"
+          />
+        </div>
+
+        {/* 担当者 + 電話番号 */}
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-[11px] text-muted-foreground mb-1.5">担当者</Label>
+            <Input
+              value={form.contactName}
+              onChange={(e) => setForm((p) => ({ ...p, contactName: e.target.value }))}
+              className="text-xs h-9"
+              placeholder="現場担当者"
+            />
+          </div>
+          <div>
+            <Label className="text-[11px] text-muted-foreground mb-1.5">電話番号</Label>
+            <Input
+              value={form.contactTel}
+              onChange={(e) => setForm((p) => ({ ...p, contactTel: e.target.value }))}
+              className="text-xs h-9"
+              placeholder="090-..."
+            />
+          </div>
+        </div>
+
+        {/* 交通手段 */}
+        <div>
+          <Label className="text-[11px] text-muted-foreground mb-1.5">交通手段</Label>
+          <Input
+            value={form.transportation}
+            onChange={(e) => setForm((p) => ({ ...p, transportation: e.target.value }))}
+            className="text-xs h-9"
+            placeholder="例: 自家用車、電車、現場集合（現場マスタから自動 prefill）"
+          />
+        </div>
+
+        {/* 加算手当 */}
+        <div className="space-y-2">
+          <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+            <Coins className="h-3 w-3" /> 加算手当
+          </Label>
+          {allowances.map((a, idx) => (
+            <div key={idx} className="flex items-center gap-1.5">
+              <Input
+                value={a.name}
+                onChange={(e) => updateAllowance(idx, { name: e.target.value })}
+                placeholder="名称（例: 路内手当）"
+                className="text-xs h-8 flex-1"
+              />
+              <select
+                value={a.category}
+                onChange={(e) => updateAllowance(idx, { category: e.target.value as "special" | "other" })}
+                className="text-xs h-8 px-1 rounded border bg-background"
+              >
+                {Object.entries(ALLOWANCE_CATEGORIES).map(([k, label]) => (
+                  <option key={k} value={k}>{label}</option>
+                ))}
+              </select>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={100}
+                value={a.amount === 0 ? "" : String(a.amount)}
+                onChange={(e) => updateAllowance(idx, { amount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                placeholder="円"
+                className="text-xs h-8 w-20"
+              />
+              <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeAllowance(idx)}>
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-1">
+            {ALLOWANCE_PRESETS.map((p) => (
+              <Button
+                key={p.name}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-[10px]"
+                onClick={() => addAllowance(p)}
+              >
+                + {p.name}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              onClick={() => addAllowance()}
+            >
+              + 自由入力
+            </Button>
+          </div>
+        </div>
+
+        {/* 備考 */}
+        <div>
+          <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+            <StickyNote className="h-3 w-3" /> 備考
+          </Label>
+          <Textarea
+            value={form.notes}
+            onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+            rows={2}
+            placeholder="この配置に関する注意点など"
+            className="text-xs"
+          />
         </div>
 
         </div>
