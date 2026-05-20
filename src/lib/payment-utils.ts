@@ -55,18 +55,18 @@ export type DailyPaymentNumbers = {
 };
 
 export function calcPaymentTotal(dp: DailyPaymentNumbers): number {
+  // 議事録 0508 L36, L220: 「リフト削除」。互換のため型・DB列は残しているが、
+  // 合計には含めない（過去データに値が残っていても 0 として扱う）
   return (
     dp.site1BaseFee +
     dp.site1Driving +
     dp.site1Holiday +
-    dp.site1Lift +
     dp.site1Skill +
     dp.site1Other +
     dp.site1Additional +
     dp.site2BaseFee +
     dp.site2Driving +
     dp.site2Holiday +
-    dp.site2Lift +
     dp.site2Skill +
     dp.site2Other +
     dp.site2Additional

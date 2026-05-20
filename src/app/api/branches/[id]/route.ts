@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
-import { updateVehicleSchema, parseId } from "@/lib/validations";
-import { daysUntilDate } from "@/lib/date-utils";
+import { updateBranchOfficeSchema, parseId } from "@/lib/validations";
 import {
   parseJsonBody,
   jsonBodyError,
@@ -21,20 +20,16 @@ export async function GET(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const vehicle = await prisma.vehicle.findUnique({ where: { id: numId } });
-  if (!vehicle) return notFoundError("車両が見つかりません");
+  const branch = await prisma.branchOffice.findUnique({ where: { id: numId } });
+  if (!branch) return notFoundError("営業所が見つかりません");
 
-  return NextResponse.json({
-    ...vehicle,
-    daysUntilInspection: daysUntilDate(vehicle.inspectionDate),
-  });
+  return NextResponse.json(branch);
 }
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // 車両編集は admin のみ（議事録: ユーザー1=officeは編集・削除NG）
   const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
@@ -44,7 +39,7 @@ export async function PATCH(
 
   const body = await parseJsonBody(request);
   if (body === null) return jsonBodyError();
-  const parsed = updateVehicleSchema.safeParse(body);
+  const parsed = updateBranchOfficeSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "入力が不正です", details: parsed.error.flatten() },
@@ -53,36 +48,34 @@ export async function PATCH(
   }
   const data = parsed.data;
 
-  if (data.plateNumber) {
-    const dup = await prisma.vehicle.findFirst({
-      where: { plateNumber: data.plateNumber, NOT: { id: numId } },
+  if (data.code) {
+    const dup = await prisma.branchOffice.findFirst({
+      where: { code: data.code, NOT: { id: numId } },
     });
     if (dup) {
       return NextResponse.json(
-        { error: "この車両ナンバーは既に登録されています" },
+        { error: "この営業所コードは既に使われています" },
         { status: 409 },
       );
     }
   }
 
   try {
-    const vehicle = await prisma.vehicle.update({
+    const branch = await prisma.branchOffice.update({
       where: { id: numId },
       data: {
-        ...(data.plateNumber !== undefined && { plateNumber: data.plateNumber }),
         ...(data.name !== undefined && { name: data.name }),
-        ...(data.vehicleType !== undefined && { vehicleType: data.vehicleType }),
-        ...(data.inspectionDate !== undefined && { inspectionDate: data.inspectionDate }),
-        ...(data.notes !== undefined && { notes: data.notes }),
-        ...(data.isActive !== undefined && { isActive: data.isActive }),
+        ...(data.code !== undefined && { code: data.code }),
+        ...(data.color !== undefined && { color: data.color }),
+        ...(data.address !== undefined && { address: data.address }),
+        ...(data.phone !== undefined && { phone: data.phone }),
+        ...(data.fax !== undefined && { fax: data.fax }),
+        ...(data.sortOrder !== undefined && { sortOrder: data.sortOrder }),
       },
     });
-    return NextResponse.json({
-      ...vehicle,
-      daysUntilInspection: daysUntilDate(vehicle.inspectionDate),
-    });
+    return NextResponse.json(branch);
   } catch (error) {
-    if (isPrismaNotFound(error)) return notFoundError("車両が見つかりません");
+    if (isPrismaNotFound(error)) return notFoundError("営業所が見つかりません");
     throw error;
   }
 }
@@ -91,7 +84,6 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // 車両削除は admin のみ
   const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
@@ -99,20 +91,31 @@ export async function DELETE(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const assignments = await prisma.assignment.count({ where: { vehicleId: numId } });
-  if (assignments > 0) {
-    // 既存の配置から車両参照を外す（Assignmentは残す）
-    await prisma.assignment.updateMany({
-      where: { vehicleId: numId },
-      data: { vehicleId: null },
-    });
+  const [staffCount, siteCount, userCount] = await Promise.all([
+    prisma.staff.count({ where: { branchOfficeId: numId } }),
+    prisma.jobSite.count({ where: { branchOfficeId: numId } }),
+    prisma.user.count({ where: { branchOfficeId: numId } }),
+  ]);
+
+  if (staffCount > 0 || siteCount > 0 || userCount > 0) {
+    return NextResponse.json(
+      {
+        error: "この営業所はまだ使われているため削除できません",
+        details: {
+          staff: staffCount,
+          jobSites: siteCount,
+          users: userCount,
+        },
+      },
+      { status: 409 },
+    );
   }
 
   try {
-    await prisma.vehicle.delete({ where: { id: numId } });
+    await prisma.branchOffice.delete({ where: { id: numId } });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (isPrismaNotFound(error)) return notFoundError("車両が見つかりません");
+    if (isPrismaNotFound(error)) return notFoundError("営業所が見つかりません");
     throw error;
   }
 }

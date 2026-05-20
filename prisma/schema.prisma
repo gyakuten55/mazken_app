@@ -255,6 +255,7 @@ model AssignmentDay {
   endTime           String?  // override
   overtimeHours     Float    @default(0)
   dailyRateOverride Int?
+  orderHeadcount    Int?     // この日に現場から発注された人数（日毎に変動するため日別保持）
   notes             String?
   acknowledgedAt    DateTime?
   acknowledgedBy    Int?

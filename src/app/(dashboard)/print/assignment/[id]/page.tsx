@@ -1,18 +1,24 @@
+// 0508 議事録対応: 地図セクション追加 + staff ロールの自分配置のみ印刷可
 import { prisma } from "@/lib/prisma";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { ja } from "date-fns/locale";
+import QRCode from "qrcode";
 import {
   ASSIGNMENT_TYPES,
   ALLOWANCE_CATEGORIES,
 } from "@/lib/constants";
 import { AssignmentPrintShell } from "./print-shell";
+import { getSession } from "@/lib/auth";
 
 export default async function AssignmentPrintPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await getSession();
+  if (!session) redirect("/login");
+
   const { id } = await params;
   const numId = Number(id);
   if (!Number.isFinite(numId) || numId <= 0) notFound();
@@ -34,7 +40,22 @@ export default async function AssignmentPrintPage({
   });
   if (!assignment) notFound();
 
+  // staff ロールは自分の配置のみアクセス可（議事録 L70「個人 → 印刷p」に自分の配置詳細の印刷を許可）
+  if (session.role === "staff" && assignment.staffId !== session.staffId) {
+    notFound();
+  }
+
   const scheduled = assignment.assignmentDays.filter((d) => d.status === "scheduled");
+
+  // 地図 URL を QR コード化（印刷時に紙へ載せて、スマホで読めば現地までナビ可能）
+  const mapShareUrl = assignment.jobSite.address || assignment.jobSite.mapUrl
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+        assignment.jobSite.address || assignment.jobSite.name,
+      )}`
+    : null;
+  const mapQrSvg = mapShareUrl
+    ? await QRCode.toString(mapShareUrl, { type: "svg", width: 140, margin: 1 })
+    : null;
 
   return (
     <AssignmentPrintShell>
@@ -161,6 +182,64 @@ export default async function AssignmentPrintPage({
             </tbody>
           </table>
         </section>
+
+        {/* 地図（URL 送信用、印刷時は非表示）— 議事録 L262「Googleマップと担当者名と持ち物情報と出てくる画面」*/}
+        {(assignment.jobSite.address || assignment.jobSite.mapUrl) && (
+          <section className="mb-4 print:hidden">
+            <h2 className="text-xs font-bold tracking-wider mb-1.5 border-b border-gray-400 pb-0.5">
+              地図
+            </h2>
+            <div className="rounded-md overflow-hidden border bg-muted/30">
+              <iframe
+                src={
+                  assignment.jobSite.mapUrl &&
+                  (assignment.jobSite.mapUrl.includes("output=embed") ||
+                    assignment.jobSite.mapUrl.includes("/maps/embed"))
+                    ? assignment.jobSite.mapUrl
+                    : `https://maps.google.com/maps?q=${encodeURIComponent(
+                        assignment.jobSite.address || assignment.jobSite.name,
+                      )}&z=18&output=embed`
+                }
+                className="w-full h-[260px] border-0"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                title={`${assignment.jobSite.name} の地図`}
+              />
+            </div>
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                assignment.jobSite.address || assignment.jobSite.name,
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-blue-600 hover:underline mt-1 inline-block"
+            >
+              Google マップで開く ↗
+            </a>
+          </section>
+        )}
+
+        {/* 印刷時のみ表示: 地図 URL の QR コード（紙からスマホで読み取って現地ナビへ） */}
+        {mapQrSvg && (
+          <section className="mb-4 hidden print:block">
+            <h2 className="text-xs font-bold tracking-wider mb-1.5 border-b border-gray-400 pb-0.5">
+              地図（QR コードで開く）
+            </h2>
+            <div className="flex items-start gap-3">
+              <div
+                className="w-[120px] h-[120px] shrink-0"
+                aria-label="現場の地図 QR コード"
+                dangerouslySetInnerHTML={{ __html: mapQrSvg }}
+              />
+              <div className="text-[10px] leading-relaxed">
+                <p className="font-medium mb-1">スマホで QR を読み取って Google マップを開く</p>
+                {assignment.jobSite.address && (
+                  <p className="text-gray-700">{assignment.jobSite.address}</p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
         {assignment.allowances.length > 0 && (
           <section className="mb-4">

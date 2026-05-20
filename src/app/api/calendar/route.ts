@@ -15,6 +15,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "startDate and endDate required" }, { status: 400 });
   }
 
+  // YYYY-MM-DD 形式・実在する日付・start <= end・最大日数のチェック
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!datePattern.test(startDate) || !datePattern.test(endDate)) {
+    return NextResponse.json({ error: "日付形式が不正です (YYYY-MM-DD)" }, { status: 400 });
+  }
+  const startMs = Date.parse(startDate + "T00:00:00Z");
+  const endMs = Date.parse(endDate + "T00:00:00Z");
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    return NextResponse.json({ error: "日付形式が不正です" }, { status: 400 });
+  }
+  if (startMs > endMs) {
+    return NextResponse.json(
+      { error: "startDate は endDate 以前である必要があります" },
+      { status: 400 },
+    );
+  }
+  // カレンダーで一度に取得する範囲は最大 1 年（DoS / 取りすぎ防止）
+  const MAX_RANGE_DAYS = 366;
+  const rangeDays = Math.floor((endMs - startMs) / 86_400_000) + 1;
+  if (rangeDays > MAX_RANGE_DAYS) {
+    return NextResponse.json(
+      { error: `期間が長すぎます（最大 ${MAX_RANGE_DAYS} 日）` },
+      { status: 400 },
+    );
+  }
+
   // Build staff filter. staffロールは自分の予定だけ見える
   const isStaffRole = auth.role === "staff" && auth.staffId;
   const staffWhere: Record<string, unknown> = { isActive: true };

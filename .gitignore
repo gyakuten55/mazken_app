@@ -53,3 +53,18 @@ next-env.d.ts
 
 # 個人メモ
 0508.MD
+
+# マツケン実データ (Excel) - 機密、リポジトリには含めない
+/data/
+
+# QA スクリーンショット / Playwright MCP キャッシュ
+/qa*.png
+/qa*.jpeg
+/qa*.jpg
+/.playwright-mcp/
+
+# 一時調査スクリプト (現場・住所カラム探索用、本流には不要)
+/prisma/find-sites.ts
+/prisma/find-sites2.ts
+/prisma/inspect-data.ts
+/prisma/inspect-customer-cols.ts

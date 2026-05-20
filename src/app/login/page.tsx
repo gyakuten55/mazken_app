@@ -19,6 +19,9 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+    // 送信時はパスワード可視化を必ず解除する（ブラウザの履歴/オートフィルに
+    // text 型入力として痕跡が残るのを避けるため）
+    setShowPassword(false);
 
     try {
       const res = await fetch("/api/auth/login", {

@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
 import { bulkAssignmentSchema } from "@/lib/validations";
+import { checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function POST(request: NextRequest) {
   const auth = await requireRole("admin", "manager", "office");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = bulkAssignmentSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
@@ -23,6 +26,7 @@ export async function POST(request: NextRequest) {
     startTime,
     endTime,
     dailyRateOverride,
+    orderHeadcount,
     belongings,
     contactName,
     contactTel,
@@ -135,13 +139,27 @@ export async function POST(request: NextRequest) {
       vehicleConflicts = Array.from(grouped.values());
     }
 
-    if (conflictsByStaff.size > 0 || insuranceWarning || vehicleConflicts.length > 0) {
+    // オーダー人数 超過チェック
+    const orderHeadcountWarnings = await checkOrderHeadcountOverflow({
+      jobSiteId,
+      dates,
+      addedStaffCount: staffIds.length,
+      newOrderHeadcount: orderHeadcount ?? null,
+    });
+
+    if (
+      conflictsByStaff.size > 0 ||
+      insuranceWarning ||
+      vehicleConflicts.length > 0 ||
+      orderHeadcountWarnings.length > 0
+    ) {
       return NextResponse.json(
         {
           hasWarnings: true,
           conflicts: Array.from(conflictsByStaff.values()),
           insuranceWarning,
           vehicleConflicts,
+          orderHeadcountWarnings,
         },
         { status: 409 },
       );
@@ -181,7 +199,13 @@ export async function POST(request: NextRequest) {
           contactTel: contactTel ?? null,
           transportation: transportation ?? null,
           notes: notes ?? null,
-          assignmentDays: { create: dates.map((date) => ({ date, status: "scheduled" })) },
+          assignmentDays: {
+            create: dates.map((date) => ({
+              date,
+              status: "scheduled",
+              orderHeadcount: orderHeadcount ?? null,
+            })),
+          },
           ...(staffAllowances.length > 0
             ? {
                 allowances: {

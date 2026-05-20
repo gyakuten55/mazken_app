@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
 import { assignmentBulkStatusSchema, parseId } from "@/lib/validations";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 // 配置に紐づく全 AssignmentDay の status を一括変更（事前断りトグル等）
 export async function PATCH(
@@ -15,7 +16,8 @@ export async function PATCH(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = assignmentBulkStatusSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { createVehicleSchema } from "@/lib/validations";
 import { daysUntilDate } from "@/lib/date-utils";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function GET() {
   const auth = await requireAuth();
@@ -25,7 +26,8 @@ export async function POST(request: NextRequest) {
   const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = createVehicleSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

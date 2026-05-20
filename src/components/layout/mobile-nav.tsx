@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -14,6 +14,7 @@ import {
   LogOut,
   Truck,
   Briefcase,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
@@ -26,16 +27,24 @@ const allBottomNavItems = [
 ];
 
 const moreMenuItems = [
-  { href: "/customers", label: "得意先", icon: Briefcase, officeHidden: false },
-  { href: "/vehicles", label: "車両管理", icon: Truck, officeHidden: false },
-  { href: "/print/work-report", label: "作業日報", icon: Printer, officeHidden: false },
-  { href: "/export", label: "CSV出力", icon: Download, officeHidden: true },
+  { href: "/customers", label: "得意先", icon: Briefcase, officeHidden: false, adminOnly: false },
+  { href: "/vehicles", label: "車両管理", icon: Truck, officeHidden: false, adminOnly: false },
+  { href: "/print/work-report", label: "作業日報", icon: Printer, officeHidden: false, adminOnly: false },
+  { href: "/print/breakdown", label: "分解表", icon: Printer, officeHidden: true, adminOnly: false },
+  { href: "/export", label: "CSV出力", icon: Download, officeHidden: true, adminOnly: false },
+  { href: "/settings", label: "設定", icon: Settings, officeHidden: false, adminOnly: true },
 ];
 
 export function MobileNav({ userRole }: { userRole: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
+  // SSR と CSR で usePathname の値が食い違うことがあり、aria-current や
+  // active 表示の有無で hydration mismatch が出る。
+  // モバイルナビ自体は md:hidden で PC では非表示なので、マウント完了まで
+  // 描画を遅延させても実害が無く、確実に mismatch を避けられる。
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const handleLogout = async () => {
     setMoreOpen(false);
@@ -52,12 +61,17 @@ export function MobileNav({ userRole }: { userRole: string }) {
     return true;
   });
   const filteredMoreMenuItems = moreMenuItems.filter((item) => {
+    if (item.adminOnly && userRole !== "admin") return false;
     if (isOffice && item.officeHidden) return false;
     return true;
   });
 
   const isMoreActive =
-    !isStaff && filteredMoreMenuItems.some((item) => pathname.startsWith(item.href));
+    !isStaff &&
+    filteredMoreMenuItems.some((item) => pathname.startsWith(item.href));
+
+  // マウント完了前は何も描画しない（hydration mismatch 回避）
+  if (!mounted) return null;
 
   return (
     <>

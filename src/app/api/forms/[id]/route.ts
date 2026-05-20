@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { updateFormSchema, parseId } from "@/lib/validations";
+import {
+  parseJsonBody,
+  jsonBodyError,
+  isPrismaNotFound,
+  notFoundError,
+} from "@/lib/api-json";
 
 export async function GET(
   _request: NextRequest,
@@ -33,18 +39,24 @@ export async function PUT(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = updateFormSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const form = await prisma.workCompletionForm.update({
-    where: { id: numId },
-    data: parsed.data,
-    include: { jobSite: { include: { branchOffice: true } } },
-  });
-  return NextResponse.json(form);
+  try {
+    const form = await prisma.workCompletionForm.update({
+      where: { id: numId },
+      data: parsed.data,
+      include: { jobSite: { include: { branchOffice: true } } },
+    });
+    return NextResponse.json(form);
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("出来高確認書が見つかりません");
+    throw error;
+  }
 }
 
 export async function DELETE(
@@ -58,6 +70,11 @@ export async function DELETE(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  await prisma.workCompletionForm.delete({ where: { id: numId } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.workCompletionForm.delete({ where: { id: numId } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("出来高確認書が見つかりません");
+    throw error;
+  }
 }

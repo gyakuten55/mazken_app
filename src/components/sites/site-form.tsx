@@ -53,6 +53,7 @@ type SiteData = {
   status: string;
   workCategory?: string;
   requiredHeadcount?: number | null;
+  requiredInsurance?: string | null;
   notes: string | null;
   qualificationBonuses?: QualificationBonus[];
 };
@@ -101,6 +102,7 @@ export function SiteForm({
     workCategory: site?.workCategory || "spot",
     requiredHeadcount:
       site?.requiredHeadcount != null ? String(site.requiredHeadcount) : "",
+    requiredInsurance: site?.requiredInsurance || "any",
     notes: site?.notes || "",
   });
 
@@ -176,6 +178,9 @@ export function SiteForm({
           dailyRateDorm1,
           dailyRateDorm2,
           dailyRateCommuter,
+          // "any" は schema 上 null と同義（指定なし）。null として送る
+          requiredInsurance:
+            form.requiredInsurance === "any" ? null : form.requiredInsurance,
           qualificationBonuses,
         }),
       });
@@ -344,6 +349,22 @@ export function SiteForm({
                   ))}
                 </select>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>必要保険</Label>
+              <select
+                className="w-full h-10 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                value={form.requiredInsurance}
+                onChange={(e) => update("requiredInsurance", e.target.value)}
+              >
+                <option value="any">指定なし</option>
+                <option value="company_only">社保のみ</option>
+                <option value="national_only">国保のみ</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                配置時、ここで指定した保険を持つスタッフのみ警告なしで割当可能になります（不一致でも force 配置は可能）
+              </p>
             </div>
 
             {isEdit && (

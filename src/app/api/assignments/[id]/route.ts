@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { updateAssignmentSchema, parseId } from "@/lib/validations";
-import { checkAssignmentConflicts } from "@/lib/assignment-validation";
+import { checkAssignmentConflicts, checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
+import {
+  parseJsonBody,
+  jsonBodyError,
+  isPrismaNotFound,
+  notFoundError,
+} from "@/lib/api-json";
 
 export async function GET(
   _request: NextRequest,
@@ -40,7 +46,8 @@ export async function PUT(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = updateAssignmentSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
@@ -72,16 +79,29 @@ export async function PUT(
     const vehicleChanged = newVehicleId !== current.vehicleId;
     if (staffChanged || vehicleChanged) {
       const dates = current.assignmentDays.map((d) => d.date);
-      const { conflicts, insuranceWarning, vehicleConflicts } = await checkAssignmentConflicts({
-        staffId: newStaffId ?? null,
-        jobSiteId: current.jobSiteId,
-        dates,
-        excludeAssignmentId: numId,
-        vehicleId: newVehicleId,
-      });
+      const [{ conflicts, insuranceWarning, vehicleConflicts }, orderHeadcountWarnings] =
+        await Promise.all([
+          checkAssignmentConflicts({
+            staffId: newStaffId ?? null,
+            jobSiteId: current.jobSiteId,
+            dates,
+            excludeAssignmentId: numId,
+            vehicleId: newVehicleId,
+          }),
+          // 未割当→割当 のときだけ人数増。割当→未割当・スタッフ間入替は人数変化なし。
+          staffChanged && current.staffId == null && newStaffId != null
+            ? checkOrderHeadcountOverflow({
+                jobSiteId: current.jobSiteId,
+                dates,
+                addedStaffCount: 1,
+                excludeAssignmentId: numId,
+              })
+            : Promise.resolve([]),
+        ]);
       if (
         (staffChanged && (conflicts.length > 0 || insuranceWarning)) ||
-        (vehicleChanged && vehicleConflicts && vehicleConflicts.length > 0)
+        (vehicleChanged && vehicleConflicts && vehicleConflicts.length > 0) ||
+        orderHeadcountWarnings.length > 0
       ) {
         return NextResponse.json(
           {
@@ -89,6 +109,7 @@ export async function PUT(
             conflicts: staffChanged ? conflicts : [],
             insuranceWarning: staffChanged ? insuranceWarning : null,
             vehicleConflicts: vehicleChanged ? vehicleConflicts ?? [] : [],
+            orderHeadcountWarnings,
           },
           { status: 409 }
         );
@@ -96,6 +117,7 @@ export async function PUT(
     }
   }
 
+  try {
   const assignment = await prisma.$transaction(async (tx) => {
     const updated = await tx.assignment.update({
       where: { id: numId },
@@ -128,6 +150,10 @@ export async function PUT(
   }, { timeout: 30000, maxWait: 10000 });
 
   return NextResponse.json(assignment);
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("配置が見つかりません");
+    throw error;
+  }
 }
 
 export async function DELETE(
@@ -141,6 +167,11 @@ export async function DELETE(
   const delId = parseId(id);
   if (!delId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  await prisma.assignment.delete({ where: { id: delId } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.assignment.delete({ where: { id: delId } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("配置が見つかりません");
+    throw error;
+  }
 }

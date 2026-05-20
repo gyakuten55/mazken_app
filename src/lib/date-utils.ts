@@ -10,6 +10,7 @@ import {
   startOfMonth,
   endOfMonth,
   eachDayOfInterval,
+  differenceInDays,
 } from "date-fns";
 import { ja } from "date-fns/locale";
 
@@ -25,6 +26,7 @@ export {
   startOfMonth,
   endOfMonth,
   eachDayOfInterval,
+  differenceInDays,
 };
 
 export const jaLocale = ja;

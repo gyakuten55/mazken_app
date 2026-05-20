@@ -1,8 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
-import { format, parseISO } from "date-fns";
-import { ja } from "date-fns/locale";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ChevronLeft,
@@ -28,6 +26,9 @@ import {
   isSunday,
   addWeeks,
   subWeeks,
+  addDays,
+  parseISO,
+  differenceInDays,
 } from "@/lib/date-utils";
 import { AssignmentPanel } from "./assignment-panel";
 import { BulkAssignmentPanel } from "./bulk-assignment-panel";
@@ -88,6 +89,11 @@ export function CalendarView({
   const [selectedAssignment, setSelectedAssignment] =
     useState<Assignment | null>(null);
   const [weeksToShow, setWeeksToShow] = useState(1);
+  // 任意の期間（日付範囲）を表示する。set されている間は週ベースの allDates ロジックを上書きする
+  const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
+  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const [rangeDraftFrom, setRangeDraftFrom] = useState("");
+  const [rangeDraftTo, setRangeDraftTo] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   // hoveredCell の state は廃止（500セル全体の再レンダーを誘発していた）。
   // 「+」ボタンのホバー表示は CSS の group-hover/cell クラスで実現する。
@@ -182,15 +188,21 @@ export function CalendarView({
   } | null>(null);
   const [moveLoading, setMoveLoading] = useState(false);
 
-  // Generate dates for the view（currentDate / weeksToShow が変わったときだけ再計算）
+  // Generate dates for the view。customRange が指定されていればそちら優先、無ければ週ベース。
   const allDates = useMemo(() => {
+    if (customRange) {
+      const from = parseISO(customRange.from);
+      const to = parseISO(customRange.to);
+      const len = Math.max(0, differenceInDays(to, from)) + 1;
+      return Array.from({ length: len }, (_, i) => addDays(from, i));
+    }
     const arr: Date[] = [];
     for (let w = 0; w < weeksToShow; w++) {
       const dates = getWeekDates(addWeeks(currentDate, w));
       arr.push(...dates);
     }
     return arr;
-  }, [currentDate, weeksToShow]);
+  }, [currentDate, weeksToShow, customRange]);
   const startDate = formatDateISO(allDates[0]);
   const endDate = formatDateISO(allDates[allDates.length - 1]);
 
@@ -258,7 +270,14 @@ export function CalendarView({
             ?.map((c) => c.siteName)
             .join(", ");
           const insuranceMsg = data.insuranceWarning ? "保険種別不一致" : "";
-          const msg = [conflictNames && `競合: ${conflictNames}`, insuranceMsg]
+          const orderOverflowMsg = Array.isArray(data.orderHeadcountWarnings) && data.orderHeadcountWarnings.length > 0
+            ? `オーダー人数超過 ${data.orderHeadcountWarnings.length}日`
+            : "";
+          const msg = [
+            conflictNames && `競合: ${conflictNames}`,
+            insuranceMsg,
+            orderOverflowMsg,
+          ]
             .filter(Boolean)
             .join(" / ");
           if (window.confirm(`警告 (${msg})\nそれでも割り当てますか？`)) {
@@ -332,15 +351,52 @@ export function CalendarView({
   }, [contextMenu]);
 
   function goToday() {
+    setCustomRange(null);
     setCurrentDate(new Date());
   }
 
   function goPrev() {
+    if (customRange) {
+      // 任意範囲の場合は範囲幅ぶん前にシフト
+      const from = parseISO(customRange.from);
+      const to = parseISO(customRange.to);
+      const len = differenceInDays(to, from) + 1;
+      setCustomRange({
+        from: formatDateISO(addDays(from, -len)),
+        to: formatDateISO(addDays(to, -len)),
+      });
+      return;
+    }
     setCurrentDate((d) => subWeeks(d, 1));
   }
 
   function goNext() {
+    if (customRange) {
+      const from = parseISO(customRange.from);
+      const to = parseISO(customRange.to);
+      const len = differenceInDays(to, from) + 1;
+      setCustomRange({
+        from: formatDateISO(addDays(from, len)),
+        to: formatDateISO(addDays(to, len)),
+      });
+      return;
+    }
     setCurrentDate((d) => addWeeks(d, 1));
+  }
+
+  function applyCustomRange() {
+    if (!rangeDraftFrom || !rangeDraftTo) return;
+    if (rangeDraftFrom > rangeDraftTo) {
+      toast.error("開始日は終了日以前にしてください");
+      return;
+    }
+    const days = differenceInDays(parseISO(rangeDraftTo), parseISO(rangeDraftFrom)) + 1;
+    if (days > 62) {
+      toast.error("一度に表示できる範囲は 62 日までです");
+      return;
+    }
+    setCustomRange({ from: rangeDraftFrom, to: rangeDraftTo });
+    setRangePopoverOpen(false);
   }
 
   function toggleBranch(id: number) {
@@ -379,6 +435,7 @@ export function CalendarView({
   );
 
   // 配置インデックス: staffId → date → Assignment[]（O(1) 参照、セル毎のフィルタを避ける）
+  // 事前断り(pre_declined)もカレンダーに表示する（カウントには含まれないが、視覚的に残す）。
   // staffRows が変わったときだけ再計算するため useMemo
   const assignmentsByStaffDate = useMemo(() => {
     const map = new Map<number, Map<string, Assignment[]>>();
@@ -386,7 +443,7 @@ export function CalendarView({
       const dateMap = new Map<string, Assignment[]>();
       for (const a of s.assignments) {
         for (const d of a.assignmentDays) {
-          if (d.status !== "scheduled") continue;
+          if (d.status !== "scheduled" && d.status !== "pre_declined") continue;
           const list = dateMap.get(d.date);
           if (list) list.push(a);
           else dateMap.set(d.date, [a]);
@@ -400,6 +457,25 @@ export function CalendarView({
   function getAssignmentsForDate(staffId: number, date: string) {
     return assignmentsByStaffDate.get(staffId)?.get(date) ?? [];
   }
+
+  // 配置の当該日が事前断りかどうかを判定するヘルパ（セル描画のスタイル切替用）
+  function isPreDeclinedOn(a: Assignment, date: string): boolean {
+    return a.assignmentDays.some((d) => d.date === date && d.status === "pre_declined");
+  }
+
+  // 日付 → 未割当配置の一覧（日付ヘッダー Popover でその日の未割当を表示するため）
+  const unassignedByDate = useMemo(() => {
+    const map = new Map<string, Assignment[]>();
+    for (const a of unassignedAssignments) {
+      for (const d of a.assignmentDays) {
+        if (d.status !== "scheduled") continue;
+        const list = map.get(d.date);
+        if (list) list.push(a);
+        else map.set(d.date, [a]);
+      }
+    }
+    return map;
+  }, [unassignedAssignments]);
 
   // Determine the position of a date within an assignment's consecutive scheduled run
   // Returns: 'single' | 'start' | 'middle' | 'end'
@@ -714,6 +790,7 @@ export function CalendarView({
     branchColor: string;
     assignmentType: string;
     assignment: Assignment;
+    dayStatus: string; // "scheduled" | "pre_declined"（現状この2つだけ表示対象）
   };
   type SiteRow = {
     id: number;
@@ -726,6 +803,11 @@ export function CalendarView({
     branchOffice: { color: string; name: string };
     staffByDate: Map<string, SiteStaffEntry[]>;
     hasUnassigned: boolean;
+    // 期間内の未割当 Assignment.id の集合（1 Assignment = 1 スロット）
+    unassignedIds: Set<number>;
+    // 日付 → その日に現場から指示された発注人数（同一現場・同日の配置の最大値）。
+    // 配置単位ではなく AssignmentDay 単位で管理しているので、日別に持つ。
+    orderByDate: Map<string, number>;
   };
 
   const siteRows = useMemo<SiteRow[]>(() => {
@@ -743,6 +825,8 @@ export function CalendarView({
         branchOffice: site.branchOffice,
         staffByDate: new Map(),
         hasUnassigned: false,
+        unassignedIds: new Set(),
+        orderByDate: new Map(),
       });
     }
     for (const staff of staffRows) {
@@ -756,12 +840,14 @@ export function CalendarView({
             branchOffice: site.branchOffice,
             staffByDate: new Map(),
             hasUnassigned: false,
+            unassignedIds: new Set(),
+            orderByDate: new Map(),
           });
         }
         const row = siteMap.get(site.id)!;
         for (const day of assignment.assignmentDays) {
-          // 事前断り・キャンセルは表示しない（必要なら別レーンを増やすが今回はスキップ）
-          if (day.status !== "scheduled") continue;
+          // 事前断り(pre_declined) も表示（取消線スタイルで残す）。キャンセルは非表示。
+          if (day.status !== "scheduled" && day.status !== "pre_declined") continue;
           if (!row.staffByDate.has(day.date)) row.staffByDate.set(day.date, []);
           row.staffByDate.get(day.date)!.push({
             staffId: staff.id,
@@ -769,7 +855,14 @@ export function CalendarView({
             branchColor: staff.branchOffice.color,
             assignmentType: assignment.assignmentType,
             assignment,
+            dayStatus: day.status,
           });
+          if (day.orderHeadcount != null) {
+            row.orderByDate.set(
+              day.date,
+              Math.max(row.orderByDate.get(day.date) ?? 0, day.orderHeadcount),
+            );
+          }
         }
       }
     }
@@ -784,11 +877,14 @@ export function CalendarView({
           branchOffice: site.branchOffice,
           staffByDate: new Map(),
           hasUnassigned: false,
+          unassignedIds: new Set(),
+          orderByDate: new Map(),
         });
       }
       const row = siteMap.get(site.id)!;
+      row.unassignedIds.add(assignment.id);
       for (const day of assignment.assignmentDays) {
-        if (day.status !== "scheduled") continue;
+        if (day.status !== "scheduled" && day.status !== "pre_declined") continue;
         if (!row.staffByDate.has(day.date)) row.staffByDate.set(day.date, []);
         row.staffByDate.get(day.date)!.push({
           staffId: null,
@@ -796,8 +892,15 @@ export function CalendarView({
           branchColor: "#9CA3AF",
           assignmentType: assignment.assignmentType,
           assignment,
+          dayStatus: day.status,
         });
         row.hasUnassigned = true;
+        if (day.orderHeadcount != null) {
+          row.orderByDate.set(
+            day.date,
+            Math.max(row.orderByDate.get(day.date) ?? 0, day.orderHeadcount),
+          );
+        }
       }
     }
     // 並び順:
@@ -841,7 +944,7 @@ export function CalendarView({
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 md:gap-3 px-2 py-2 md:p-3 border-b bg-card shrink-0">
         {/* Row 1: Navigation + Week toggle + View mode */}
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1 min-w-0">
           <Button
             variant="outline"
             onClick={goToday}
@@ -870,9 +973,71 @@ export function CalendarView({
           >
             <ChevronRight className="h-5 w-5" />
           </Button>
-          <span className="font-semibold text-sm md:text-base ml-1 tabular-nums whitespace-nowrap">
-            {formatDateRange(allDates[0], allDates[allDates.length - 1])}
-          </span>
+          <Popover
+            open={rangePopoverOpen}
+            onOpenChange={(open) => {
+              setRangePopoverOpen(open);
+              if (open) {
+                setRangeDraftFrom(customRange?.from ?? startDate);
+                setRangeDraftTo(customRange?.to ?? endDate);
+              }
+            }}
+          >
+            <PopoverTrigger
+              className={cn(
+                "font-semibold text-xs sm:text-sm md:text-base ml-1 tabular-nums px-2 py-1 rounded-md transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring/30 cursor-pointer",
+                customRange && "text-primary",
+              )}
+              title="期間をクリックして任意の範囲を指定"
+              aria-label="表示する期間を設定"
+            >
+              {formatDateRange(allDates[0], allDates[allDates.length - 1])}
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-3 space-y-3" align="start">
+              <p className="text-sm font-semibold">表示する期間を選んでください</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={rangeDraftFrom}
+                  onChange={(e) => setRangeDraftFrom(e.target.value)}
+                  className="h-10 border rounded-md px-2.5 text-sm w-[150px]"
+                  aria-label="開始日"
+                />
+                <span className="text-sm text-muted-foreground">〜</span>
+                <input
+                  type="date"
+                  value={rangeDraftTo}
+                  onChange={(e) => setRangeDraftTo(e.target.value)}
+                  className="h-10 border rounded-md px-2.5 text-sm w-[150px]"
+                  aria-label="終了日"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={applyCustomRange}
+                  disabled={!rangeDraftFrom || !rangeDraftTo || rangeDraftFrom > rangeDraftTo}
+                  className="flex-1 h-10 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  この範囲で表示
+                </button>
+                {customRange && (
+                  <button
+                    onClick={() => {
+                      setCustomRange(null);
+                      setRangePopoverOpen(false);
+                    }}
+                    className="h-10 px-3 rounded-lg border text-sm font-medium hover:bg-muted transition-colors"
+                    title="週単位の表示に戻す"
+                  >
+                    週表示に戻す
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                最長 62 日まで指定できます
+              </p>
+            </PopoverContent>
+          </Popover>
         </div>
 
         {/* Week toggle */}
@@ -884,12 +1049,15 @@ export function CalendarView({
           {[1, 2, 4].map((w) => (
             <button
               key={w}
-              onClick={() => setWeeksToShow(w)}
-              aria-pressed={weeksToShow === w}
+              onClick={() => {
+                setCustomRange(null);
+                setWeeksToShow(w);
+              }}
+              aria-pressed={!customRange && weeksToShow === w}
               className={cn(
                 "px-3 md:px-4 text-sm font-medium transition-colors",
                 w > 1 && "border-l",
-                weeksToShow === w
+                !customRange && weeksToShow === w
                   ? "bg-primary text-primary-foreground"
                   : "hover:bg-muted",
               )}
@@ -1203,16 +1371,48 @@ export function CalendarView({
         )}
       </div>
 
-      {/* ===== 未割当バナー（議事録: 「上に未割り当て案件を表示」「ドラッグして落としていく」） ===== */}
-      <UnassignedBanner
-        viewMode={viewMode}
-        unassignedAssignments={unassignedAssignments}
-        draggingUnassignedId={draggingUnassignedId}
-        dropAssigning={dropAssigning}
-        onDragStart={handleUnassignedDragStart}
-        onDragEnd={handleUnassignedDragEnd}
-        onCardClick={handleUnassignedCardClick}
-      />
+      {/* 未割当は staff ビューでは日付ヘッダーの Popover で扱う。
+          site ビューだけ「未割当あり現場」のサマリを上部に固定表示する。 */}
+      {viewMode === "site" && (() => {
+        const rowsWithUnassigned = siteRows.filter((r) => r.unassignedIds.size > 0);
+        if (rowsWithUnassigned.length === 0) return null;
+        const totalSlots = rowsWithUnassigned.reduce((sum, r) => sum + r.unassignedIds.size, 0);
+        return (
+          <div className="border-b bg-rose-50/70 px-2 md:px-3 py-2">
+            <div className="flex items-center gap-2 mb-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-rose-700 shrink-0" />
+              <span className="text-xs font-bold text-rose-800">
+                未割当あり {rowsWithUnassigned.length}現場 / 合計 {totalSlots}名
+              </span>
+              <span className="text-[10px] text-rose-700">
+                スタッフを当ててください
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {rowsWithUnassigned.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    // 該当現場行へスクロール
+                    const el = gridRef.current?.querySelector<HTMLElement>(`[data-site-row-id="${r.id}"]`);
+                    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white px-2 py-1 text-[11px] hover:bg-rose-100"
+                  style={{
+                    borderLeftWidth: "3px",
+                    borderLeftColor: r.branchOffice.color,
+                  }}
+                  title={`${r.name} — 未割当 ${r.unassignedIds.size}名`}
+                >
+                  <span className="font-medium text-rose-900 truncate max-w-[140px]">{r.name}</span>
+                  <span className="font-bold tabular-nums text-rose-700">{r.unassignedIds.size}名</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ===== TABLE VIEWS (staff / site) ===== */}
       <div
@@ -1242,6 +1442,8 @@ export function CalendarView({
                   const isToday = dateStr === today;
                   const intensity = hc > 0 ? Math.min(hc / maxHeadcount, 1) : 0;
                   const isWeekBoundary = isCompact && dateIndex > 0 && dateIndex % 7 === 0;
+                  const dayUnassigned = unassignedByDate.get(dateStr) ?? [];
+                  const hasPopover = hc > 0 || dayUnassigned.length > 0;
                   return (
                     <th
                       key={dateStr}
@@ -1272,7 +1474,7 @@ export function CalendarView({
                           {holiday}
                         </div>
                       )}
-                      {hc > 0 && (
+                      {hasPopover && (
                         <Popover>
                           <PopoverTrigger
                             className={cn(
@@ -1280,37 +1482,108 @@ export function CalendarView({
                               isCompact ? "mt-0.5" : "mt-1"
                             )}
                           >
-                            {!isCompact && (
+                            {!isCompact && hc > 0 && (
                               <div
                                 className="h-1 rounded-full bg-primary/60 transition-all"
                                 style={{ width: `${Math.max(intensity * 100, 10)}%` }}
                               />
                             )}
-                            <span className={cn(
-                              "font-bold tabular-nums text-primary",
-                              isCompact ? "text-[9px]" : "text-xs"
-                            )}>
-                              {hc}名
-                            </span>
+                            {hc > 0 && (
+                              <span className={cn(
+                                "font-bold tabular-nums text-primary",
+                                isCompact ? "text-[9px]" : "text-xs"
+                              )}>
+                                {hc}名
+                              </span>
+                            )}
+                            {dayUnassigned.length > 0 && (
+                              <span
+                                className={cn(
+                                  "rounded px-1 font-bold tabular-nums bg-amber-100 text-amber-800",
+                                  isCompact ? "text-[9px]" : "text-[10px]",
+                                )}
+                                title={`未割当 ${dayUnassigned.length}件`}
+                              >
+                                未{dayUnassigned.length}
+                              </span>
+                            )}
                           </PopoverTrigger>
-                          <PopoverContent side="bottom" className="w-56 p-0">
+                          <PopoverContent side="bottom" className="w-64 p-0">
                             <div className="px-3 py-2 border-b bg-muted/30">
                               <div className="font-medium text-xs">
                                 {formatDateJP(date)} の配置内訳
                               </div>
                             </div>
-                            <div className="p-2 space-y-1">
-                              {getSiteBreakdown(dateStr).map((site) => (
-                                <div key={site.jobSiteId} className="flex items-center justify-between text-xs px-1 py-0.5">
-                                  <span className="truncate mr-2">{site.siteName}</span>
-                                  <span className="font-bold tabular-nums text-primary shrink-0">{site.count}名</span>
+                            {hc > 0 && (
+                              <div className="p-2 space-y-1">
+                                {getSiteBreakdown(dateStr).map((site) => (
+                                  <div key={site.jobSiteId} className="flex items-center justify-between text-xs px-1 py-0.5">
+                                    <span className="truncate mr-2">{site.siteName}</span>
+                                    <span className="font-bold tabular-nums text-primary shrink-0">{site.count}名</span>
+                                  </div>
+                                ))}
+                                <div className="border-t pt-1 mt-1 flex items-center justify-between text-xs px-1 font-medium">
+                                  <span>合計</span>
+                                  <span className="tabular-nums text-primary">{hc}名</span>
                                 </div>
-                              ))}
-                              <div className="border-t pt-1 mt-1 flex items-center justify-between text-xs px-1 font-medium">
-                                <span>合計</span>
-                                <span className="tabular-nums text-primary">{hc}名</span>
                               </div>
-                            </div>
+                            )}
+                            {dayUnassigned.length > 0 && (
+                              <div className="p-2 border-t bg-amber-50/40">
+                                <div className="flex items-center gap-1 mb-1.5">
+                                  <AlertTriangle className="h-3 w-3 text-amber-700" />
+                                  <span className="text-[11px] font-semibold text-amber-800">
+                                    未割当 {dayUnassigned.length}件
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  {dayUnassigned.map((a) => {
+                                    const dayOrder =
+                                      a.assignmentDays.find((d) => d.date === dateStr)?.orderHeadcount ?? null;
+                                    return (
+                                      <div
+                                        key={a.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        draggable
+                                        onDragStart={(e) => {
+                                          handleUnassignedDragStart(a.id);
+                                          e.dataTransfer.setData("text/plain", String(a.id));
+                                          e.dataTransfer.effectAllowed = "move";
+                                        }}
+                                        onDragEnd={handleUnassignedDragEnd}
+                                        onClick={() => handleUnassignedCardClick(a)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            handleUnassignedCardClick(a);
+                                          }
+                                        }}
+                                        className="w-full text-left rounded border bg-white px-2 py-1 hover:bg-amber-100/60 cursor-grab active:cursor-grabbing"
+                                        style={{
+                                          borderLeftWidth: "3px",
+                                          borderLeftColor: a.jobSite.branchOffice.color,
+                                        }}
+                                      >
+                                        <div className="text-[11px] font-medium text-amber-900 leading-tight truncate">
+                                          {a.jobSite.name}
+                                        </div>
+                                        <div className="text-[9px] text-amber-700 leading-tight tabular-nums">
+                                          {a.startTime}〜{a.endTime}
+                                          {a.shiftType === "night" && <span className="ml-1">🌙</span>}
+                                          {dayOrder != null && (
+                                            <span className="ml-1">· 発注{dayOrder}名</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <p className="text-[10px] text-amber-700 mt-1.5">
+                                  クリックで編集 / スタッフ行へドラッグで配置
+                                </p>
+                              </div>
+                            )}
                           </PopoverContent>
                         </Popover>
                       )}
@@ -1349,8 +1622,10 @@ export function CalendarView({
                     const dayStaffFirst = siteRow.staffByDate.get(firstDateStr) ?? [];
                     const scheduledFirst = dayStaffFirst.length;
                     const requiredHeadcount = siteRow.requiredHeadcount ?? null;
+                    // 先頭日のオーダー人数（日毎に変わる）
+                    const orderHeadcount = siteRow.orderByDate.get(firstDateStr) ?? null;
                     return (
-                    <tr key={siteRow.id} className="group/row">
+                    <tr key={siteRow.id} data-site-row-id={siteRow.id} className="group/row">
                       {/* Site name - sticky left */}
                       <td className={cn(
                         "border-b border-r bg-card sticky left-0 z-[5] transition-colors",
@@ -1379,8 +1654,35 @@ export function CalendarView({
                                   {scheduledFirst}/{requiredHeadcount}
                                 </span>
                               )}
-                              {siteRow.hasUnassigned && (
-                                <span className="ml-1 text-[9px] px-1 rounded bg-amber-200 text-amber-900">未割当</span>
+                              {orderHeadcount != null && (
+                                <span
+                                  className={cn(
+                                    "ml-1 text-[10px] px-1 rounded font-mono",
+                                    scheduledFirst === orderHeadcount
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : scheduledFirst > orderHeadcount
+                                        ? "bg-rose-100 text-rose-800"
+                                        : "bg-amber-100 text-amber-800",
+                                  )}
+                                  title={
+                                    scheduledFirst === orderHeadcount
+                                      ? `発注 ${orderHeadcount}名 / 配置 ${scheduledFirst}名（一致・先頭日）`
+                                      : scheduledFirst > orderHeadcount
+                                        ? `⚠ 過剰: 発注 ${orderHeadcount}名 に対し ${scheduledFirst}名 配置済み（先頭日）`
+                                        : `不足: 発注 ${orderHeadcount}名 に対し ${scheduledFirst}名 配置（先頭日）`
+                                  }
+                                >
+                                  発{scheduledFirst}/{orderHeadcount}
+                                  {scheduledFirst > orderHeadcount && <span className="ml-0.5">⚠</span>}
+                                </span>
+                              )}
+                              {siteRow.unassignedIds.size > 0 && (
+                                <span
+                                  className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-rose-500 text-white font-bold tabular-nums"
+                                  title={`未割当 ${siteRow.unassignedIds.size}名（クリックで該当現場へドラッグ&ドロップ可）`}
+                                >
+                                  未割 {siteRow.unassignedIds.size}名
+                                </span>
                               )}
                             </div>
                             {!isCompact && (
@@ -1426,15 +1728,22 @@ export function CalendarView({
                             <div className={cn("space-y-0.5 py-0.5", isCompact ? "min-h-[24px]" : "min-h-[44px]")}>
                               {dayStaff.map((entry) => {
                                 const isUnassigned = entry.staffId == null;
+                                const isPreDeclined = entry.dayStatus === "pre_declined";
                                 return (
                                   <div
                                     key={entry.assignment.id}
                                     className={cn(
                                       "mx-0.5 rounded cursor-pointer hover:brightness-95 transition-all",
                                       isCompact ? "px-1 py-0.5" : "px-1.5 py-1",
-                                      isUnassigned && "border border-dashed border-amber-500 bg-amber-50"
+                                      isUnassigned && "border border-dashed border-amber-500 bg-amber-50",
+                                      isPreDeclined && "opacity-60 line-through bg-rose-50 border border-rose-300 [&_*]:text-rose-700",
                                     )}
-                                    style={isUnassigned ? undefined : { backgroundColor: entry.branchColor + "20" }}
+                                    style={
+                                      isUnassigned || isPreDeclined
+                                        ? undefined
+                                        : { backgroundColor: entry.branchColor + "20" }
+                                    }
+                                    title={isPreDeclined ? "事前断り" : undefined}
                                     onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1446,11 +1755,12 @@ export function CalendarView({
                                   >
                                     {isCompact ? (
                                       <div className={cn("text-[9px] leading-tight font-medium truncate", isUnassigned && "text-amber-700")}>
-                                        {entry.staffName}
+                                        {isPreDeclined && "🚫 "}{entry.staffName}
                                       </div>
                                     ) : (
                                       <>
                                         <div className={cn("text-[11px] leading-tight font-medium truncate flex items-center gap-1", isUnassigned && "text-amber-700")}>
+                                          {isPreDeclined && <span className="text-[9px]">🚫</span>}
                                           {entry.staffName}
                                           {entry.assignmentType === "business_trip" && (
                                             <span className="text-[8px] px-0.5 rounded-sm shrink-0" style={{ backgroundColor: (isUnassigned ? "#F59E0B" : entry.branchColor) + "30" }}>
@@ -1620,6 +1930,7 @@ export function CalendarView({
                               const isStart = pos === "start" || pos === "single";
                               const isEnd = pos === "end" || pos === "single";
                               const isMiddle = pos === "middle";
+                              const isPreDeclined = isPreDeclinedOn(a, dateStr);
 
                               const isBeingMoved = isMoveDragging && moveDrag!.assignment.id === a.id;
 
@@ -1634,10 +1945,12 @@ export function CalendarView({
                                     isEnd && !isStart && "rounded-r-md mr-0.5 -ml-px",
                                     isMiddle && "-mx-px",
                                     isBeingMoved && "opacity-40 ring-2 ring-primary/50 ring-dashed",
+                                    isPreDeclined && "opacity-60 line-through border border-rose-300 [&_*]:text-rose-700",
                                   )}
                                   style={{
-                                    backgroundColor: color + "20",
+                                    backgroundColor: isPreDeclined ? "#FFE4E6" : color + "20",
                                   }}
+                                  title={isPreDeclined ? "事前断り" : undefined}
                                   onMouseDown={(e) => {
                                     e.stopPropagation();
                                     handleCardDragStart(a, staff.id, dateStr, e);
@@ -1995,78 +2308,3 @@ export function CalendarView({
   );
 }
 
-// 未割当バナー（メモ化して、親の state 変化に巻き込まれないようにする）
-const UnassignedBanner = memo(function UnassignedBanner({
-  viewMode,
-  unassignedAssignments,
-  draggingUnassignedId,
-  dropAssigning,
-  onDragStart,
-  onDragEnd,
-  onCardClick,
-}: {
-  viewMode: "staff" | "site";
-  unassignedAssignments: Assignment[];
-  draggingUnassignedId: number | null;
-  dropAssigning: boolean;
-  onDragStart: (id: number) => void;
-  onDragEnd: () => void;
-  onCardClick: (a: Assignment) => void;
-}) {
-  if (viewMode !== "staff" || unassignedAssignments.length === 0) return null;
-  return (
-    <div className="border-b bg-amber-50/60 px-2 md:px-3 py-2">
-      <div className="flex items-center gap-2 mb-1.5">
-        <AlertTriangle className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-        <span className="text-xs font-semibold text-amber-800">
-          未割当 {unassignedAssignments.length}件
-        </span>
-        <span className="text-[10px] text-amber-700">
-          スタッフ行の空きセルにドラッグで配置できます
-        </span>
-        {dropAssigning && <span className="text-[10px] text-amber-700 animate-pulse">割当中...</span>}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {unassignedAssignments.map((a) => {
-          const dateRange =
-            a.startDate === a.endDate
-              ? format(parseISO(a.startDate || ""), "M/d", { locale: ja })
-              : `${format(parseISO(a.startDate || ""), "M/d", { locale: ja })}〜${format(parseISO(a.endDate || ""), "M/d", { locale: ja })}`;
-          const isDragging = draggingUnassignedId === a.id;
-          return (
-            <div
-              key={a.id}
-              draggable
-              onDragStart={(e) => {
-                onDragStart(a.id);
-                e.dataTransfer.setData("text/plain", String(a.id));
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragEnd={onDragEnd}
-              onClick={() => onCardClick(a)}
-              className={cn(
-                "cursor-grab active:cursor-grabbing select-none rounded-md border-2 border-dashed border-amber-500 bg-white px-2 py-1 shadow-sm",
-                "hover:bg-amber-100/60",
-                isDragging && "opacity-40 ring-2 ring-amber-400",
-              )}
-              style={{
-                borderLeftWidth: "4px",
-                borderLeftStyle: "solid",
-                borderLeftColor: a.jobSite.branchOffice.color,
-              }}
-              title={`${a.jobSite.name}（${dateRange}）— ドラッグでスタッフセルへ配置`}
-            >
-              <div className="text-[11px] font-medium text-amber-900 leading-tight">
-                {a.jobSite.name}
-              </div>
-              <div className="text-[9px] text-amber-700 leading-tight tabular-nums">
-                {dateRange} · {a.startTime}〜{a.endTime}
-                {a.shiftType === "night" && <span className="ml-1">🌙</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-});

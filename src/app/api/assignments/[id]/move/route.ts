@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
 import { moveAssignmentSchema, parseId } from "@/lib/validations";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 function shiftDate(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00");
@@ -21,7 +22,8 @@ export async function POST(
   const assignmentId = parseId(id);
   if (!assignmentId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = moveAssignmentSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });

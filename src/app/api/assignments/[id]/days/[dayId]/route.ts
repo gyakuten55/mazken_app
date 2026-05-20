@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, isAuthError } from "@/lib/api-auth";
 import { assignmentDayPatchSchema, parseId } from "@/lib/validations";
+import {
+  parseJsonBody,
+  jsonBodyError,
+  isPrismaNotFound,
+  notFoundError,
+} from "@/lib/api-json";
 
 export async function PATCH(
   request: NextRequest,
@@ -14,16 +20,22 @@ export async function PATCH(
   const numDayId = parseId(dayId);
   if (!numDayId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = assignmentDayPatchSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { status, acknowledged } = parsed.data;
+  const { status, acknowledged, dailyRateOverride, orderHeadcount } = parsed.data;
 
-  // status 変更は admin/manager/office のみ
-  if (status !== undefined && !["admin", "manager", "office"].includes(auth.role)) {
+  // status / dailyRateOverride / orderHeadcount 変更は admin/manager/office のみ
+  if (
+    (status !== undefined ||
+      dailyRateOverride !== undefined ||
+      orderHeadcount !== undefined) &&
+    !["admin", "manager", "office"].includes(auth.role)
+  ) {
     return NextResponse.json({ error: "権限がありません" }, { status: 403 });
   }
 
@@ -41,6 +53,8 @@ export async function PATCH(
 
   const data: Record<string, unknown> = {};
   if (status !== undefined) data.status = status;
+  if (dailyRateOverride !== undefined) data.dailyRateOverride = dailyRateOverride;
+  if (orderHeadcount !== undefined) data.orderHeadcount = orderHeadcount;
   if (acknowledged === true) {
     data.acknowledgedAt = new Date();
     data.acknowledgedBy = auth.id;
@@ -49,10 +63,14 @@ export async function PATCH(
     data.acknowledgedBy = null;
   }
 
-  const day = await prisma.assignmentDay.update({
-    where: { id: numDayId },
-    data,
-  });
-
-  return NextResponse.json(day);
+  try {
+    const day = await prisma.assignmentDay.update({
+      where: { id: numDayId },
+      data,
+    });
+    return NextResponse.json(day);
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("配置日が見つかりません");
+    throw error;
+  }
 }

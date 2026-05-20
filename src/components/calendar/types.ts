@@ -2,6 +2,8 @@ export type AssignmentDay = {
   id: number;
   date: string;
   status: string; // "scheduled" | "cancelled" | "completed" | "pre_declined"
+  dailyRateOverride?: number | null;
+  orderHeadcount?: number | null;
 };
 
 export type AssignmentAllowance = {

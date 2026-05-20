@@ -120,9 +120,9 @@ export function StaffTable({
               <TableRow key={s.id}>
                 <TableCell className="font-mono text-sm">{s.employeeCode}</TableCell>
                 <TableCell>
-                  <div>
+                  <div className="flex flex-col leading-tight">
                     <span className="font-medium">{s.name}</span>
-                    <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">
+                    <span className="text-xs text-muted-foreground hidden sm:inline">
                       {s.nameKana}
                     </span>
                   </div>

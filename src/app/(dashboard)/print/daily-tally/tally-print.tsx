@@ -333,18 +333,17 @@ function TallyPage({
             <th className="border border-gray-500 p-1" colSpan={4}>相殺明細</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>相殺<br />合計</th>
             <th className="border border-gray-500 p-1" rowSpan={2}>当日残</th>
-            <th className="border border-gray-500 p-1" rowSpan={2}>累計残</th>
           </tr>
           <tr className="bg-gray-50 text-[8px]">
             <th className="border border-gray-400 p-0.5">基本料金</th>
             <th className="border border-gray-400 p-0.5">現場運転</th>
             <th className="border border-gray-400 p-0.5">自社計画</th>
             <th className="border border-gray-400 p-0.5">特殊</th>
-            <th className="border border-gray-400 p-0.5">他</th>
+            <th className="border border-gray-400 p-0.5">他(支払)</th>
             <th className="border border-gray-400 p-0.5">追加料金</th>
             <th className="border border-gray-400 p-0.5">安全会費</th>
             <th className="border border-gray-400 p-0.5">宿泊</th>
-            <th className="border border-gray-400 p-0.5">その他</th>
+            <th className="border border-gray-400 p-0.5">他(相殺)</th>
             <th className="border border-gray-400 p-0.5">前渡金</th>
           </tr>
         </thead>
@@ -451,15 +450,6 @@ function TallyPage({
                     rowSpan={hasSite2 ? 2 : 1}
                   >
                     {dp?.todayBalance === 0 ? "" : yen(dp?.todayBalance ?? 0)}
-                  </td>
-                  <td
-                    className={cn(
-                      "border border-gray-400 px-1 py-0.5 text-right tabular-nums font-bold bg-gray-50",
-                      row.cumulativeBalance < 0 && "text-rose-700",
-                    )}
-                    rowSpan={hasSite2 ? 2 : 1}
-                  >
-                    {row.cumulativeBalance === 0 ? "" : row.cumulativeBalance.toLocaleString("ja-JP")}
                   </td>
                 </tr>
                 {hasSite2 && dp && (

@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { X, Trash2, MapPin, Clock, CalendarDays, AlertTriangle, ShieldAlert, Sun, Moon, Truck, Coins, StickyNote, Info } from "lucide-react";
+import { X, Trash2, MapPin, Clock, CalendarDays, AlertTriangle, ShieldAlert, Sun, Moon, Truck, Coins, StickyNote, Info, Users } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -246,6 +246,11 @@ function SiteMap({
     ? trimmedMapUrl
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(trimmedAddress || siteName)}`;
 
+  // パネルを開くたびに iframe を即読み込みすると配置を順次確認するワークフローで
+  // Google Maps SDK へのリクエストが繰り返されるため、ユーザーが地図を必要と
+  // 判断したタイミングでだけ mount する。
+  const [showMap, setShowMap] = useState(false);
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
@@ -261,16 +266,27 @@ function SiteMap({
           Google マップで開く ↗
         </a>
       </div>
-      <div className="rounded-md overflow-hidden border bg-muted/30">
-        <iframe
-          key={embedSrc}
-          src={embedSrc}
-          className="w-full h-[220px] border-0"
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-          title={`${siteName} の地図`}
-        />
-      </div>
+      {showMap ? (
+        <div className="rounded-md overflow-hidden border bg-muted/30">
+          <iframe
+            key={embedSrc}
+            src={embedSrc}
+            className="w-full h-[220px] border-0"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            title={`${siteName} の地図`}
+          />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowMap(true)}
+          className="w-full h-[60px] rounded-md border border-dashed bg-muted/30 hover:bg-muted/50 text-[11px] text-muted-foreground transition-colors flex items-center justify-center gap-1"
+        >
+          <MapPin className="h-3 w-3" />
+          地図を表示
+        </button>
+      )}
       {trimmedAddress && (
         <p className="text-[10px] text-muted-foreground">{trimmedAddress}</p>
       )}
@@ -598,10 +614,19 @@ export function AssignmentPanel({
   const [staffInfo, setStaffInfo] = useState<StaffInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [fullAssignment, setFullAssignment] = useState<Assignment | null>(null);
+  // 日別単価の編集中バッファ。onBlur で PATCH し、確定後は fullAssignment.assignmentDays に反映する。
+  const [dayRateEdits, setDayRateEdits] = useState<Record<number, string>>({});
+  const [savingRateDayId, setSavingRateDayId] = useState<number | null>(null);
+  // 日別オーダー人数の編集中バッファ
+  const [dayOrderEdits, setDayOrderEdits] = useState<Record<number, string>>({});
+  const [savingOrderDayId, setSavingOrderDayId] = useState<number | null>(null);
   const siteSelectRef = useRef<HTMLSelectElement>(null);
   const [conflicts, setConflicts] = useState<ConflictWarning[]>([]);
   const [insuranceWarning, setInsuranceWarning] = useState<InsuranceWarning | null>(null);
   const [vehicleConflicts, setVehicleConflicts] = useState<VehicleConflictWarning[]>([]);
+  const [orderHeadcountWarnings, setOrderHeadcountWarnings] = useState<
+    { date: string; orderHeadcount: number; projectedCount: number; overflow: number }[]
+  >([]);
   const [showForceConfirm, setShowForceConfirm] = useState(false);
 
   const [form, setForm] = useState<{
@@ -614,6 +639,7 @@ export function AssignmentPanel({
     startTime: string;
     endTime: string;
     dailyRateOverride: string;
+    orderHeadcount: string;
     belongings: string;
     contactName: string;
     contactTel: string;
@@ -632,6 +658,8 @@ export function AssignmentPanel({
       existingAssignment?.dailyRateOverride != null
         ? String(existingAssignment.dailyRateOverride)
         : "",
+    // 新規作成時に「全日に同じ初期値を入れる」用。編集時は日別単価表で個別管理する。
+    orderHeadcount: "",
     belongings: existingAssignment?.belongings ?? "",
     contactName: existingAssignment?.contactName ?? "",
     contactTel: existingAssignment?.contactTel ?? "",
@@ -768,6 +796,9 @@ export function AssignmentPanel({
       const rateNum = form.dailyRateOverride.trim()
         ? Math.max(0, Math.floor(Number(form.dailyRateOverride)))
         : null;
+      const orderNum = form.orderHeadcount.trim()
+        ? Math.max(0, Math.floor(Number(form.orderHeadcount)))
+        : null;
       const cleanAllowances = allowances
         .filter((a) => a.name.trim() && a.amount > 0)
         .map((a) => ({
@@ -791,6 +822,7 @@ export function AssignmentPanel({
         startTime: form.startTime,
         endTime: form.endTime,
         dailyRateOverride: rateNum,
+        orderHeadcount: orderNum,
         belongings: form.belongings.trim() || null,
         contactName: form.contactName.trim() || null,
         contactTel: form.contactTel.trim() || null,
@@ -824,6 +856,7 @@ export function AssignmentPanel({
         );
         setInsuranceWarning(data.insuranceWarning || null);
         setVehicleConflicts(data.vehicleConflicts || []);
+        setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
         setShowForceConfirm(true);
         return;
       }
@@ -832,6 +865,7 @@ export function AssignmentPanel({
         setConflicts([]);
         setInsuranceWarning(null);
         setVehicleConflicts([]);
+        setOrderHeadcountWarnings([]);
         setShowForceConfirm(false);
         onSaved();
       } else {
@@ -894,6 +928,7 @@ export function AssignmentPanel({
         setConflicts(data.conflicts || []);
         setInsuranceWarning(data.insuranceWarning || null);
         setVehicleConflicts(data.vehicleConflicts || []);
+        setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
         setShowForceConfirm(true);
         return;
       }
@@ -918,6 +953,8 @@ export function AssignmentPanel({
             startTime: form.startTime,
             endTime: form.endTime,
             dailyRateOverride: rateNum,
+            // 追加スタッフ分の orderHeadcount は null。既存日の値を引き継ぎたい場合は日別単価表で個別調整。
+            orderHeadcount: null,
             belongings: form.belongings.trim() || null,
             contactName: form.contactName.trim() || null,
             contactTel: form.contactTel.trim() || null,
@@ -939,6 +976,7 @@ export function AssignmentPanel({
           );
           setInsuranceWarning(data.insuranceWarning || null);
           setVehicleConflicts(data.vehicleConflicts || []);
+          setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
           setShowForceConfirm(true);
           return;
         }
@@ -955,6 +993,7 @@ export function AssignmentPanel({
       setConflicts([]);
       setInsuranceWarning(null);
       setVehicleConflicts([]);
+      setOrderHeadcountWarnings([]);
       setShowForceConfirm(false);
       onSaved();
     } catch {
@@ -1054,6 +1093,119 @@ export function AssignmentPanel({
   }
   function removeAllowance(idx: number) {
     setAllowances((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // 日別単価を保存（入力欄の blur 時に発火）
+  async function saveDayRate(day: AssignmentDay, raw: string) {
+    if (!existingAssignment) return;
+    const trimmed = raw.trim();
+    const nextOverride: number | null = trimmed
+      ? Math.max(0, Math.floor(Number(trimmed)))
+      : null;
+    if (Number.isNaN(nextOverride as number)) {
+      toast.error("数値で入力してください");
+      return;
+    }
+    if ((day.dailyRateOverride ?? null) === nextOverride) {
+      // 変更なし
+      setDayRateEdits((prev) => {
+        if (!(day.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[day.id];
+        return next;
+      });
+      return;
+    }
+    setSavingRateDayId(day.id);
+    try {
+      const res = await fetch(
+        `/api/assignments/${existingAssignment.id}/days/${day.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dailyRateOverride: nextOverride }),
+        },
+      );
+      if (!res.ok) {
+        toast.error("単価の保存に失敗しました");
+        return;
+      }
+      setFullAssignment((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          assignmentDays: prev.assignmentDays.map((d) =>
+            d.id === day.id ? { ...d, dailyRateOverride: nextOverride } : d,
+          ),
+        };
+      });
+      setDayRateEdits((prev) => {
+        if (!(day.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[day.id];
+        return next;
+      });
+    } catch {
+      toast.error("単価の保存に失敗しました");
+    } finally {
+      setSavingRateDayId(null);
+    }
+  }
+
+  // 日別オーダー人数を保存
+  async function saveDayOrder(day: AssignmentDay, raw: string) {
+    if (!existingAssignment) return;
+    const trimmed = raw.trim();
+    const nextOrder: number | null = trimmed
+      ? Math.max(0, Math.floor(Number(trimmed)))
+      : null;
+    if (Number.isNaN(nextOrder as number)) {
+      toast.error("数値で入力してください");
+      return;
+    }
+    if ((day.orderHeadcount ?? null) === nextOrder) {
+      setDayOrderEdits((prev) => {
+        if (!(day.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[day.id];
+        return next;
+      });
+      return;
+    }
+    setSavingOrderDayId(day.id);
+    try {
+      const res = await fetch(
+        `/api/assignments/${existingAssignment.id}/days/${day.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderHeadcount: nextOrder }),
+        },
+      );
+      if (!res.ok) {
+        toast.error("オーダー人数の保存に失敗しました");
+        return;
+      }
+      setFullAssignment((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          assignmentDays: prev.assignmentDays.map((d) =>
+            d.id === day.id ? { ...d, orderHeadcount: nextOrder } : d,
+          ),
+        };
+      });
+      setDayOrderEdits((prev) => {
+        if (!(day.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[day.id];
+        return next;
+      });
+    } catch {
+      toast.error("オーダー人数の保存に失敗しました");
+    } finally {
+      setSavingOrderDayId(null);
+    }
   }
 
   // Toggle a single day
@@ -1248,8 +1400,8 @@ export function AssignmentPanel({
   return (
     <div className="w-full bg-card rounded-xl border shadow-2xl flex flex-col max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-6rem)]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 rounded-t-xl">
-        <div>
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b bg-muted/30 rounded-t-xl">
+        <div className="min-w-0">
           <h3 className="font-bold text-base">
             {isEdit ? "配置編集" : "新規配置"}
           </h3>
@@ -1259,9 +1411,42 @@ export function AssignmentPanel({
             </p>
           )}
         </div>
-        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}>
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* 編集モードでは「事前断り」トグル & 印刷リンクをヘッダに常時表示（見落とし防止） */}
+          {isEdit && existingAssignment && (() => {
+            const allDays = displayAssignment?.assignmentDays ?? [];
+            const isDeclined =
+              allDays.length > 0 && allDays.every((d) => d.status === "pre_declined");
+            return (
+              <>
+                <Button
+                  type="button"
+                  variant={isDeclined ? "default" : "outline"}
+                  size="sm"
+                  className={cn(
+                    "h-8 text-xs",
+                    isDeclined && "bg-rose-600 hover:bg-rose-700 text-white",
+                  )}
+                  onClick={handleTogglePreDeclined}
+                  disabled={loading}
+                >
+                  {isDeclined ? "🚫 事前断り中" : "事前断りに変更"}
+                </Button>
+                <a
+                  href={`/print/assignment/${existingAssignment.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center h-8 px-3 text-xs rounded-md border border-input bg-background hover:bg-accent transition-colors"
+                >
+                  印刷
+                </a>
+              </>
+            );
+          })()}
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Content — 横長モーダル: 左にスタッフ選択、右にその他フォーム */}
@@ -1486,6 +1671,9 @@ export function AssignmentPanel({
                 }
                 className="text-xs h-8"
               />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                ※ オーダー人数は日毎に変わるため、下の「日別 オーダー人数 / 単価」表で各日に設定してください
+              </p>
             </div>
 
             {/* 持ち物 */}
@@ -1644,6 +1832,21 @@ export function AssignmentPanel({
                     ))}
                   </div>
                 )}
+                {orderHeadcountWarnings.length > 0 && (
+                  <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-rose-700 font-medium text-xs">
+                      <Users className="h-3.5 w-3.5" />
+                      オーダー人数 超過
+                    </div>
+                    {orderHeadcountWarnings.map((w) => (
+                      <div key={w.date} className="text-[11px] text-rose-700 tabular-nums">
+                        {w.date}: 発注 <span className="font-medium">{w.orderHeadcount}名</span> に対し
+                        配置 <span className="font-medium">{w.projectedCount}名</span>
+                        （+{w.overflow}名 過剰）
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1711,6 +1914,123 @@ export function AssignmentPanel({
                 </div>
                 <p className="text-[10px] text-muted-foreground">
                   クリックで切替 · ドラッグで範囲選択
+                </p>
+              </div>
+            )}
+
+            {/* 日別 オーダー人数 + 単価 — AssignmentDay の per-day 編集 */}
+            {displayAssignment.assignmentDays.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <CalendarDays className="h-3 w-3" /> 日別 オーダー人数 / 単価
+                </Label>
+                <div className="rounded-md border max-h-[260px] overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-muted/40">
+                      <tr className="text-[10px] text-muted-foreground">
+                        <th className="text-left px-2 py-1 font-medium">日付</th>
+                        <th className="text-left px-2 py-1 font-medium">状態</th>
+                        <th className="text-right px-2 py-1 font-medium">オーダー人数</th>
+                        <th className="text-right px-2 py-1 font-medium">単価（円）</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayAssignment.assignmentDays.map((day) => {
+                        const d = new Date(day.date + "T00:00:00");
+                        const dayOfWeek = d.getDay();
+                        const fallback =
+                          form.dailyRateOverride.trim()
+                            ? Math.max(0, Math.floor(Number(form.dailyRateOverride)))
+                            : null;
+                        const storedRate = day.dailyRateOverride ?? null;
+                        const editingRate = dayRateEdits[day.id];
+                        const rateValue = editingRate ?? (storedRate != null ? String(storedRate) : "");
+                        const ratePlaceholder = fallback != null ? String(fallback) : "基本日当";
+                        const storedOrder = day.orderHeadcount ?? null;
+                        const editingOrder = dayOrderEdits[day.id];
+                        const orderValue = editingOrder ?? (storedOrder != null ? String(storedOrder) : "");
+                        const statusLabel =
+                          day.status === "scheduled"
+                            ? "出勤"
+                            : day.status === "cancelled"
+                              ? "休"
+                              : day.status === "pre_declined"
+                                ? "断"
+                                : day.status;
+                        return (
+                          <tr key={day.id} className="border-t">
+                            <td
+                              className={cn(
+                                "px-2 py-1 tabular-nums whitespace-nowrap",
+                                dayOfWeek === 0 && "text-red-500",
+                                dayOfWeek === 6 && "text-blue-500",
+                              )}
+                            >
+                              {format(d, "M/d(E)", { locale: ja })}
+                            </td>
+                            <td className="px-2 py-1 text-muted-foreground">{statusLabel}</td>
+                            <td className="px-2 py-1 text-right">
+                              <Input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                value={orderValue}
+                                placeholder="—"
+                                disabled={savingOrderDayId === day.id}
+                                onChange={(e) =>
+                                  setDayOrderEdits((prev) => ({
+                                    ...prev,
+                                    [day.id]: e.target.value,
+                                  }))
+                                }
+                                onBlur={() => {
+                                  if (editingOrder === undefined) return;
+                                  saveDayOrder(day, editingOrder);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                className="h-7 text-xs text-right w-16 ml-auto"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <Input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={100}
+                                value={rateValue}
+                                placeholder={ratePlaceholder}
+                                disabled={savingRateDayId === day.id}
+                                onChange={(e) =>
+                                  setDayRateEdits((prev) => ({
+                                    ...prev,
+                                    [day.id]: e.target.value,
+                                  }))
+                                }
+                                onBlur={() => {
+                                  if (editingRate === undefined) return;
+                                  saveDayRate(day, editingRate);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
+                                className="h-7 text-xs text-right w-24 ml-auto"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  単価 空欄 = 上の「現場別日給」（無ければスタッフ基本日当）/ オーダー人数は現場から指示された必要人数
                 </p>
               </div>
             )}
@@ -1893,22 +2213,44 @@ export function AssignmentPanel({
               </select>
             </div>
 
-            <div>
-              <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
-                <Coins className="h-3 w-3" /> 現場別日給 (上書き)
-              </Label>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={100}
-                placeholder="空欄=スタッフ基本日当を使用"
-                value={form.dailyRateOverride}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))
-                }
-                className="text-xs h-9"
-              />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Users className="h-3 w-3" /> オーダー人数（初期値）
+                </Label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={1}
+                  placeholder="例: 5"
+                  value={form.orderHeadcount}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, orderHeadcount: e.target.value }))
+                  }
+                  className="text-xs h-9"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  現場から指示された必要人数。日毎の調整は作成後に編集画面で行えます
+                </p>
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Coins className="h-3 w-3" /> 現場別日給 (上書き)
+                </Label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={100}
+                  placeholder="空欄=スタッフ基本日当"
+                  value={form.dailyRateOverride}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))
+                  }
+                  className="text-xs h-9"
+                />
+              </div>
             </div>
 
             <div>
@@ -2077,6 +2419,21 @@ export function AssignmentPanel({
                     ))}
                   </div>
                 )}
+                {orderHeadcountWarnings.length > 0 && (
+                  <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-rose-700 font-medium text-xs">
+                      <Users className="h-3.5 w-3.5" />
+                      オーダー人数 超過
+                    </div>
+                    {orderHeadcountWarnings.map((w) => (
+                      <div key={w.date} className="text-[11px] text-rose-700 tabular-nums">
+                        {w.date}: 発注 <span className="font-medium">{w.orderHeadcount}名</span> に対し
+                        配置 <span className="font-medium">{w.projectedCount}名</span>
+                        （+{w.overflow}名 過剰）
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2100,6 +2457,7 @@ export function AssignmentPanel({
                   setConflicts([]);
                   setInsuranceWarning(null);
                   setVehicleConflicts([]);
+                  setOrderHeadcountWarnings([]);
                 }}
                 disabled={loading}
               >
@@ -2158,6 +2516,8 @@ export function AssignmentPanel({
                 setShowForceConfirm(false);
                 setConflicts([]);
                 setInsuranceWarning(null);
+                setVehicleConflicts([]);
+                setOrderHeadcountWarnings([]);
               }}
               disabled={loading}
             >

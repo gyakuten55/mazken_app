@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { createAssignmentSchema } from "@/lib/validations";
-import { checkAssignmentConflicts } from "@/lib/assignment-validation";
+import { checkAssignmentConflicts, checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -66,7 +67,8 @@ export async function POST(request: NextRequest) {
   const auth = await requireRole("admin", "manager", "office");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = createAssignmentSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });
@@ -82,6 +84,7 @@ export async function POST(request: NextRequest) {
     startTime,
     endTime,
     dailyRateOverride,
+    orderHeadcount,
     belongings,
     contactName,
     contactTel,
@@ -100,18 +103,29 @@ export async function POST(request: NextRequest) {
     cur.setDate(cur.getDate() + 1);
   }
 
-  // --- Conflict & Insurance & Vehicle Check ---
+  // --- Conflict & Insurance & Vehicle & Order-Headcount Check ---
   if (!force && dates.length > 0) {
-    const { conflicts, insuranceWarning, vehicleConflicts } = await checkAssignmentConflicts({
-      staffId: staffId ?? null,
-      jobSiteId,
-      dates,
-      vehicleId,
-    });
+    const [{ conflicts, insuranceWarning, vehicleConflicts }, orderHeadcountWarnings] =
+      await Promise.all([
+        checkAssignmentConflicts({
+          staffId: staffId ?? null,
+          jobSiteId,
+          dates,
+          vehicleId,
+        }),
+        // staffId が null（未割当の確保）は人数カウントに含めない
+        checkOrderHeadcountOverflow({
+          jobSiteId,
+          dates,
+          addedStaffCount: staffId != null ? 1 : 0,
+          newOrderHeadcount: orderHeadcount ?? null,
+        }),
+      ]);
     if (
       conflicts.length > 0 ||
       insuranceWarning ||
-      (vehicleConflicts && vehicleConflicts.length > 0)
+      (vehicleConflicts && vehicleConflicts.length > 0) ||
+      orderHeadcountWarnings.length > 0
     ) {
       return NextResponse.json(
         {
@@ -119,6 +133,7 @@ export async function POST(request: NextRequest) {
           conflicts,
           insuranceWarning,
           vehicleConflicts: vehicleConflicts ?? [],
+          orderHeadcountWarnings,
         },
         { status: 409 }
       );
@@ -146,6 +161,7 @@ export async function POST(request: NextRequest) {
         create: dates.map((date) => ({
           date,
           status: "scheduled",
+          orderHeadcount: orderHeadcount ?? null,
         })),
       },
       ...(allowances && allowances.length > 0

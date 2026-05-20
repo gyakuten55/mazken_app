@@ -3,13 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
 import { csvExportSchema } from "@/lib/validations";
 import { INSURANCE_TYPES, ASSIGNMENT_TYPES, type InsuranceType, type AssignmentType } from "@/lib/constants";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function POST(request: NextRequest) {
   // CSV はお金関連の生データを含むため admin のみ
   const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = csvExportSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { X, MapPin, Clock, Sun, Moon, Truck, Coins, StickyNote } from "lucide-react";
+import { X, MapPin, Clock, Sun, Moon, Truck, Coins, StickyNote, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ASSIGNMENT_TYPES, ALLOWANCE_PRESETS, ALLOWANCE_CATEGORIES } from "@/lib/constants";
@@ -71,6 +71,7 @@ export function BulkAssignmentPanel({
     startTime: string;
     endTime: string;
     dailyRateOverride: string;
+    orderHeadcount: string;
     belongings: string;
     contactName: string;
     contactTel: string;
@@ -86,6 +87,7 @@ export function BulkAssignmentPanel({
     startTime: "08:00",
     endTime: "18:00",
     dailyRateOverride: "",
+    orderHeadcount: "",
     belongings: "",
     contactName: "",
     contactTel: "",
@@ -179,6 +181,7 @@ export function BulkAssignmentPanel({
           ...(a.targetStaffIds.length > 0 ? { targetStaffIds: a.targetStaffIds } : {}),
         }));
       const dailyRate = form.dailyRateOverride.trim() ? Math.max(0, Math.floor(Number(form.dailyRateOverride) || 0)) : null;
+      const orderNum = form.orderHeadcount.trim() ? Math.max(0, Math.floor(Number(form.orderHeadcount) || 0)) : null;
       const res = await fetch("/api/assignments/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,6 +190,7 @@ export function BulkAssignmentPanel({
           ...form,
           vehicleId: form.vehicleId ?? null,
           dailyRateOverride: dailyRate,
+          orderHeadcount: orderNum,
           belongings: form.belongings || null,
           contactName: form.contactName || null,
           contactTel: form.contactTel || null,
@@ -195,6 +199,28 @@ export function BulkAssignmentPanel({
           allowances: cleanAllowances,
         }),
       });
+      if (res.status === 409) {
+        const data = await res.json();
+        const warnings: string[] = [];
+        if (Array.isArray(data.conflicts) && data.conflicts.length > 0) {
+          warnings.push(`重複: ${data.conflicts.length}件`);
+        }
+        if (data.insuranceWarning) warnings.push("保険種別ミスマッチあり");
+        if (Array.isArray(data.vehicleConflicts) && data.vehicleConflicts.length > 0) {
+          warnings.push(`車両重複: ${data.vehicleConflicts.length}件`);
+        }
+        if (
+          Array.isArray(data.orderHeadcountWarnings) &&
+          data.orderHeadcountWarnings.length > 0
+        ) {
+          const first = data.orderHeadcountWarnings[0];
+          warnings.push(
+            `オーダー人数 超過: ${first.date} ほか${data.orderHeadcountWarnings.length}日（発注${first.orderHeadcount}に対し${first.projectedCount}名）`,
+          );
+        }
+        toast.warning(`警告: ${warnings.join(" / ") || "保存できません"}（個別画面で確認してください）`);
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         toast.success(`${data.created}名の配置を作成しました`);
@@ -400,21 +426,39 @@ export function BulkAssignmentPanel({
           </select>
         </div>
 
-        {/* 現場別日給 (上書き) */}
-        <div>
-          <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
-            <Coins className="h-3 w-3" /> 現場別日給 (上書き)
-          </Label>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={100}
-            placeholder="空欄=スタッフ基本日当を使用"
-            value={form.dailyRateOverride}
-            onChange={(e) => setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))}
-            className="text-xs h-9"
-          />
+        <div className="grid grid-cols-2 gap-2">
+          {/* オーダー人数 */}
+          <div>
+            <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+              <Users className="h-3 w-3" /> オーダー人数
+            </Label>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={1}
+              placeholder="例: 5"
+              value={form.orderHeadcount}
+              onChange={(e) => setForm((p) => ({ ...p, orderHeadcount: e.target.value }))}
+              className="text-xs h-9"
+            />
+          </div>
+          {/* 現場別日給 (上書き) */}
+          <div>
+            <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+              <Coins className="h-3 w-3" /> 現場別日給 (上書き)
+            </Label>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={100}
+              placeholder="空欄=スタッフ基本日当"
+              value={form.dailyRateOverride}
+              onChange={(e) => setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))}
+              className="text-xs h-9"
+            />
+          </div>
         </div>
 
         {/* 持ち物 */}

@@ -3,6 +3,7 @@ import { hashSync } from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 const createUserSchema = z.object({
   username: z.string().min(1, "ユーザー名は必須です").max(100),
@@ -40,7 +41,8 @@ export async function POST(request: NextRequest) {
   const auth = await requireRole("admin");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = createUserSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

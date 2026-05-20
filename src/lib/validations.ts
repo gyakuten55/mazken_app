@@ -109,6 +109,7 @@ export const createAssignmentSchema = z.object({
   startTime: timeString.default("08:00"),
   endTime: timeString.default("18:00"),
   dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  orderHeadcount: z.number().int().min(0).nullable().optional(),
   belongings: z.string().nullable().optional(),
   contactName: z.string().nullable().optional(),
   contactTel: z.string().nullable().optional(),
@@ -133,6 +134,7 @@ export const bulkAssignmentSchema = z.object({
   endTime: timeString.default("18:00"),
   // 単一作成と同じ任意フィールド。指定された値は全スタッフ共通でコピーされる
   dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  orderHeadcount: z.number().int().min(0).nullable().optional(),
   belongings: z.string().nullable().optional(),
   contactName: z.string().nullable().optional(),
   contactTel: z.string().nullable().optional(),
@@ -162,6 +164,28 @@ export const updateAssignmentSchema = z.object({
   force: z.boolean().optional(),
 });
 
+// --- BranchOffice (営業所) ---
+
+const hexColor = z
+  .string()
+  .regex(/^#[0-9a-fA-F]{6}$/, "色は #RRGGBB の形式で指定してください");
+
+export const createBranchOfficeSchema = z.object({
+  name: z.string().min(1, "営業所名は必須です").max(100),
+  code: z
+    .string()
+    .min(1, "営業所コードは必須です")
+    .max(20)
+    .regex(/^[A-Za-z0-9_-]+$/, "コードは半角英数・ハイフン・アンダースコアのみ使えます"),
+  color: hexColor,
+  address: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  fax: z.string().nullable().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const updateBranchOfficeSchema = createBranchOfficeSchema.partial();
+
 // --- Vehicle ---
 
 export const createVehicleSchema = z.object({
@@ -185,9 +209,15 @@ export const moveAssignmentSchema = z.object({
 export const assignmentDayPatchSchema = z.object({
   status: z.enum(["scheduled", "cancelled", "completed", "pre_declined"]).optional(),
   acknowledged: z.boolean().optional(),
+  dailyRateOverride: z.number().int().min(0).nullable().optional(),
+  orderHeadcount: z.number().int().min(0).nullable().optional(),
 }).refine(
-  (data) => data.status !== undefined || data.acknowledged !== undefined,
-  { message: "status または acknowledged のいずれかを指定してください" }
+  (data) =>
+    data.status !== undefined ||
+    data.acknowledged !== undefined ||
+    data.dailyRateOverride !== undefined ||
+    data.orderHeadcount !== undefined,
+  { message: "status / acknowledged / dailyRateOverride / orderHeadcount のいずれかを指定してください" }
 );
 
 // 配置全期間の status を一括変更（事前断りトグルなど）

@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { updateCustomerSchema, parseId } from "@/lib/validations";
+import {
+  parseJsonBody,
+  jsonBodyError,
+  isPrismaNotFound,
+  notFoundError,
+} from "@/lib/api-json";
 
 export async function GET(
   _request: NextRequest,
@@ -38,7 +44,8 @@ export async function PUT(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = updateCustomerSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -59,18 +66,23 @@ export async function PUT(
     }
   }
 
-  const customer = await prisma.customer.update({
-    where: { id: numId },
-    data: {
-      ...(parsed.data.code !== undefined && { code: parsed.data.code || null }),
-      ...(parsed.data.name !== undefined && { name: parsed.data.name }),
-      ...(parsed.data.address !== undefined && { address: parsed.data.address }),
-      ...(parsed.data.phone !== undefined && { phone: parsed.data.phone }),
-      ...(parsed.data.notes !== undefined && { notes: parsed.data.notes }),
-      ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
-    },
-  });
-  return NextResponse.json(customer);
+  try {
+    const customer = await prisma.customer.update({
+      where: { id: numId },
+      data: {
+        ...(parsed.data.code !== undefined && { code: parsed.data.code || null }),
+        ...(parsed.data.name !== undefined && { name: parsed.data.name }),
+        ...(parsed.data.address !== undefined && { address: parsed.data.address }),
+        ...(parsed.data.phone !== undefined && { phone: parsed.data.phone }),
+        ...(parsed.data.notes !== undefined && { notes: parsed.data.notes }),
+        ...(parsed.data.isActive !== undefined && { isActive: parsed.data.isActive }),
+      },
+    });
+    return NextResponse.json(customer);
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("得意先が見つかりません");
+    throw error;
+  }
 }
 
 export async function DELETE(
@@ -94,6 +106,11 @@ export async function DELETE(
       reason: `${linked}件の現場が紐付いているため論理削除しました`,
     });
   }
-  await prisma.customer.delete({ where: { id: numId } });
-  return NextResponse.json({ ok: true, mode: "deleted" });
+  try {
+    await prisma.customer.delete({ where: { id: numId } });
+    return NextResponse.json({ ok: true, mode: "deleted" });
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("得意先が見つかりません");
+    throw error;
+  }
 }

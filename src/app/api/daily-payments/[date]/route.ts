@@ -9,6 +9,7 @@ import {
   calcOffsetTotal,
   calcTodayBalance,
 } from "@/lib/payment-utils";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -168,7 +169,8 @@ export async function PATCH(
     return NextResponse.json({ error: "日付形式が不正です" }, { status: 400 });
   }
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = patchBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

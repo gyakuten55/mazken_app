@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
 import { createFormSchema } from "@/lib/validations";
+import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -28,7 +29,8 @@ export async function POST(request: NextRequest) {
   const auth = await requireRole("admin", "manager", "office");
   if (isAuthError(auth)) return auth;
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = createFormSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "入力が不正です", details: parsed.error.flatten() }, { status: 400 });

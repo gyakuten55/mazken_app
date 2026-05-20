@@ -436,36 +436,34 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-muted/60 backdrop-blur">
               <tr className="text-xs">
-                <th className="border px-2 py-2 text-left" rowSpan={2}>社員<br />コード</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>氏名</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>得意先<br />コード</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>得意先名</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>現場<br />コード</th>
-                <th className="border px-2 py-2 text-left" rowSpan={2}>現場名</th>
+                <th className="border px-2 py-2 text-left min-w-[60px]" rowSpan={2}>社員<br />コード</th>
+                <th className="border px-2 py-2 text-left min-w-[140px]" rowSpan={2}>氏名</th>
+                <th className="border px-2 py-2 text-left min-w-[72px]" rowSpan={2}>得意先<br />コード</th>
+                <th className="border px-2 py-2 text-left min-w-[140px]" rowSpan={2}>得意先名</th>
+                <th className="border px-2 py-2 text-left min-w-[72px]" rowSpan={2}>現場<br />コード</th>
+                <th className="border px-2 py-2 text-left min-w-[140px]" rowSpan={2}>現場名</th>
                 <th className="border px-2 py-2 text-center" colSpan={6}>支払明細</th>
-                <th className="border px-2 py-2 text-right" rowSpan={2}>支払<br />合計</th>
+                <th className="border px-2 py-2 text-right min-w-[80px]" rowSpan={2}>支払<br />合計</th>
                 <th className="border px-2 py-2 text-center" colSpan={4}>相殺明細</th>
-                <th className="border px-2 py-2 text-right" rowSpan={2}>当日残</th>
-                <th className="border px-2 py-2 text-right" rowSpan={2}>累計残</th>
+                <th className="border px-2 py-2 text-right min-w-[80px]" rowSpan={2}>当日残</th>
               </tr>
               <tr className="text-[10px] text-muted-foreground">
-                <th className="border px-1 py-1">基本</th>
-                <th className="border px-1 py-1">運転</th>
-                <th className="border px-1 py-1">自社</th>
-                <th className="border px-1 py-1">特殊</th>
-                <th className="border px-1 py-1">他</th>
-                <th className="border px-1 py-1">追加</th>
-                <th className="border px-1 py-1">安全</th>
-                <th className="border px-1 py-1">宿泊</th>
-                <th className="border px-1 py-1">他</th>
-                <th className="border px-1 py-1">前渡金</th>
+                <th className="border px-1 py-1 min-w-[72px]">基本</th>
+                <th className="border px-1 py-1 min-w-[64px]">運転</th>
+                <th className="border px-1 py-1 min-w-[64px]">自社</th>
+                <th className="border px-1 py-1 min-w-[64px]">特殊</th>
+                <th className="border px-1 py-1 min-w-[64px]">他<br /><span className="text-[8px] opacity-70">(支払)</span></th>
+                <th className="border px-1 py-1 min-w-[64px]">追加</th>
+                <th className="border px-1 py-1 min-w-[56px]">安全</th>
+                <th className="border px-1 py-1 min-w-[64px]">宿泊</th>
+                <th className="border px-1 py-1 min-w-[64px]">他<br /><span className="text-[8px] opacity-70">(相殺)</span></th>
+                <th className="border px-1 py-1 min-w-[72px]">前渡金</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
                 const edit = editState.get(row.staff.id) ?? emptyEditable();
                 const { paymentTotal, todayBalance } = rowTotal(edit);
-                const cumulative = row.priorBalance + todayBalance;
                 const isDirty = dirtyStaffIds.has(row.staff.id);
                 const hasSite2 = !!row.dailyPayment?.site2;
 
@@ -524,15 +522,6 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
                     >
                       {yen(todayBalance)}
                     </td>
-                    <td
-                      className={cn(
-                        "border px-2 py-1.5 text-right tabular-nums font-bold whitespace-nowrap bg-muted/20 align-middle",
-                        cumulative < 0 && "text-rose-700",
-                      )}
-                      rowSpan={hasSite2 ? 2 : 1}
-                    >
-                      {cumulative.toLocaleString("ja-JP")}
-                    </td>
                   </>
                 );
 
@@ -548,13 +537,13 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
                       <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap text-muted-foreground">
                         {row.dailyPayment?.site1?.clientCode ?? ""}
                       </td>
-                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
+                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[160px] truncate">
                         {row.dailyPayment?.site1?.clientName ?? ""}
                       </td>
                       <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap">
                         {row.dailyPayment?.site1?.siteCode ?? ""}
                       </td>
-                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[140px] truncate">
+                      <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[160px] truncate">
                         {row.dailyPayment?.site1?.name ?? ""}
                       </td>
                       {(["site1BaseFee", "site1Driving", "site1Holiday", "site1Skill", "site1Other", "site1Additional"] as const).map((f) => (
@@ -576,13 +565,13 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
                         <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap text-muted-foreground">
                           {row.dailyPayment?.site2?.clientCode ?? ""}
                         </td>
-                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[120px] truncate">
+                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap text-muted-foreground max-w-[160px] truncate">
                           {row.dailyPayment?.site2?.clientName ?? ""}
                         </td>
                         <td className="border px-2 py-1.5 text-xs font-mono whitespace-nowrap">
                           {row.dailyPayment?.site2?.siteCode ?? ""}
                         </td>
-                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[140px] truncate">
+                        <td className="border px-2 py-1.5 text-xs whitespace-nowrap font-medium max-w-[160px] truncate">
                           {row.dailyPayment?.site2?.name ?? ""}
                         </td>
                         {(["site2BaseFee", "site2Driving", "site2Holiday", "site2Skill", "site2Other", "site2Additional"] as const).map((f) => (

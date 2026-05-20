@@ -4,6 +4,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isAuthError } from "@/lib/api-auth";
 import { parseId } from "@/lib/validations";
+import {
+  parseJsonBody,
+  jsonBodyError,
+  isPrismaNotFound,
+  notFoundError,
+} from "@/lib/api-json";
 
 const patchUserSchema = z.object({
   name: z.string().min(1).optional(),
@@ -25,7 +31,8 @@ export async function PATCH(
   const numId = parseId(id);
   if (!numId) return NextResponse.json({ error: "無効なIDです" }, { status: 400 });
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
+  if (body === null) return jsonBodyError();
   const parsed = patchUserSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -55,21 +62,25 @@ export async function PATCH(
   if (data.isActive !== undefined) updateData.isActive = data.isActive;
   if (data.password) updateData.passwordHash = hashSync(data.password, 10);
 
-  const user = await prisma.user.update({
-    where: { id: numId },
-    data: updateData,
-    include: { branchOffice: true, staff: true },
-  });
-
-  return NextResponse.json({
-    id: user.id,
-    username: user.username,
-    name: user.name,
-    role: user.role,
-    branchOffice: user.branchOffice,
-    staff: user.staff ? { id: user.staff.id, name: user.staff.name } : null,
-    isActive: user.isActive,
-  });
+  try {
+    const user = await prisma.user.update({
+      where: { id: numId },
+      data: updateData,
+      include: { branchOffice: true, staff: true },
+    });
+    return NextResponse.json({
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      branchOffice: user.branchOffice,
+      staff: user.staff ? { id: user.staff.id, name: user.staff.name } : null,
+      isActive: user.isActive,
+    });
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("ユーザーが見つかりません");
+    throw error;
+  }
 }
 
 export async function DELETE(
@@ -90,6 +101,11 @@ export async function DELETE(
     );
   }
 
-  await prisma.user.delete({ where: { id: numId } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.user.delete({ where: { id: numId } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    if (isPrismaNotFound(error)) return notFoundError("ユーザーが見つかりません");
+    throw error;
+  }
 }
