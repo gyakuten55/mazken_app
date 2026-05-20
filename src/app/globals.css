@@ -138,6 +138,21 @@
 }
 
 @media print {
+  /* 印刷時はサイドバー / モバイルナビ / ヘッダを非表示にし、メインの余白もリセット */
+  [data-sidebar],
+  [data-mobile-nav-top],
+  [data-mobile-nav-bottom] {
+    display: none !important;
+  }
+  [data-dashboard-main] {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
   html,
   body:has(.print-form) {
     height: auto !important;

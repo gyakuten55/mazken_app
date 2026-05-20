@@ -76,7 +76,7 @@ export function MobileNav({ userRole }: { userRole: string }) {
   return (
     <>
       {/* Top bar - simple title only */}
-      <header className="md:hidden flex items-center h-14 px-4 border-b bg-sidebar text-sidebar-foreground fixed top-0 left-0 right-0 z-50">
+      <header data-mobile-nav-top className="md:hidden flex items-center h-14 px-4 border-b bg-sidebar text-sidebar-foreground fixed top-0 left-0 right-0 z-50">
         <div className="leading-none">
           <span className="font-bold text-base">スタッフ配置</span>
           <span className="text-xs text-sidebar-foreground/60 ml-2">管理システム</span>
@@ -85,6 +85,7 @@ export function MobileNav({ userRole }: { userRole: string }) {
 
       {/* Bottom tab bar */}
       <nav
+        data-mobile-nav-bottom
         className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-card z-50 safe-area-inset-bottom shadow-[0_-1px_4px_rgba(0,0,0,0.04)]"
         aria-label="メインメニュー"
       >

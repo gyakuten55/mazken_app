@@ -83,6 +83,7 @@ export function Sidebar({
 
   return (
     <aside
+      data-sidebar
       className={cn(
         "hidden md:flex md:flex-col md:fixed md:inset-y-0 bg-sidebar text-sidebar-foreground transition-[width] duration-200 z-30",
         collapsed ? "md:w-20" : "md:w-64",

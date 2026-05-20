@@ -50,9 +50,10 @@ export function DashboardShell({
           <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} userRole={userRole} />
           <MobileNav userRole={userRole} />
           <main
+            data-dashboard-main
             className={cn(
               "pt-14 md:pt-0 pb-24 md:pb-0 min-h-screen transition-[padding] duration-200",
-              collapsed ? "md:pl-20" : "md:pl-64"
+              collapsed ? "md:pl-20" : "md:pl-64",
             )}
           >
             {children}
