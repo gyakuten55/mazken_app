@@ -39,7 +39,9 @@ function extractRecordId(result: unknown): string {
 
 function safeJson(value: unknown): string | null {
   try {
-    const s = JSON.stringify(value, (_k, v) => {
+    const s = JSON.stringify(value, (k, v) => {
+      // 機密フィールドは監査ログ(diff)に残さない
+      if (k === "passwordHash" || k === "loginToken") return "***";
       if (typeof v === "bigint") return v.toString();
       if (typeof v === "string" && v.length > 500) return v.slice(0, 500) + "…";
       return v;

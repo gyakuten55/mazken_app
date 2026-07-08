@@ -7,6 +7,10 @@ import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (isAuthError(auth)) return auth;
+  // 出来高請求書は番頭/スケジュール入力専用/個人には見せない（議事録 §6・お金関連）
+  if (["office", "schedule", "staff"].includes(auth.role)) {
+    return NextResponse.json({ error: "権限がありません" }, { status: 403 });
+  }
 
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date");

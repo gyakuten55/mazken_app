@@ -9,7 +9,7 @@ const createUserSchema = z.object({
   username: z.string().min(1, "ユーザー名は必須です").max(100),
   password: z.string().min(4, "パスワードは4文字以上").max(200),
   name: z.string().min(1, "名前は必須です"),
-  role: z.enum(["admin", "manager", "office", "viewer", "staff"]),
+  role: z.enum(["admin", "manager", "office", "schedule", "viewer", "staff"]),
   branchOfficeId: z.number().int().nullable().optional(),
   staffId: z.number().int().nullable().optional(),
 });

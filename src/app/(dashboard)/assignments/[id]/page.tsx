@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,9 @@ export default async function AssignmentDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const session = await getSession();
+  if (!session) redirect("/login");
+
   const { id } = await params;
   const numId = Number(id);
   if (!Number.isFinite(numId) || numId <= 0) notFound();
@@ -245,7 +249,8 @@ export default async function AssignmentDetailPage({
         </section>
 
         {/* Allowances */}
-        {assignment.allowances.length > 0 && (
+        {/* P-4/§6: 金額は作業員(staff)に見せない */}
+        {session.role !== "staff" && assignment.allowances.length > 0 && (
           <section className="rounded-xl border bg-card shadow-sm p-4 md:p-6 space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5" /> 加算手当
@@ -269,8 +274,8 @@ export default async function AssignmentDetailPage({
           </section>
         )}
 
-        {/* Required qualifications */}
-        {assignment.jobSite.qualificationBonuses.length > 0 && (
+        {/* Required qualifications（資格加算額は金額のため staff には非表示） */}
+        {session.role !== "staff" && assignment.jobSite.qualificationBonuses.length > 0 && (
           <section className="rounded-xl border bg-card shadow-sm p-4 md:p-6 space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               資格・特殊技能料金

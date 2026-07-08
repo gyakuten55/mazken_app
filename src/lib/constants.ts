@@ -66,18 +66,20 @@ export const HEADCOUNT_EXCLUDED_STATUSES: ReadonlyArray<keyof typeof DAY_STATUS>
   "cancelled",
 ];
 
-// 5/20 デモ向けは 3 ロール構成（admin / office / staff）。
-// manager / viewer は DB 上は残るが UI では選択不可。
+// 議事録§6の4区分: 管理者=admin / 番頭=office / スケジュール入力専用=schedule / 個人=staff。
+// manager(所長) / viewer(閲覧) は4区分に無く廃止（UI選択不可・アクセス許可リストからも除外）。
+// 既存データ互換のためラベル値は残す（旧ユーザーの表示用）。
 export const USER_ROLES = {
   admin: "管理者",
-  manager: "所長",
-  office: "ユーザー1（お金関連以外OK）",
-  viewer: "閲覧",
-  staff: "個人",
+  office: "番頭（お金以外OK）",
+  schedule: "スケジュール入力専用",
+  staff: "個人（作業員）",
+  manager: "所長（廃止）",
+  viewer: "閲覧（廃止）",
 } as const;
 
 // UI で選択可能なロール（プルダウン等で使う）
-export const SELECTABLE_USER_ROLES = ["admin", "office", "staff"] as const;
+export const SELECTABLE_USER_ROLES = ["admin", "office", "schedule", "staff"] as const;
 export type SelectableUserRole = (typeof SELECTABLE_USER_ROLES)[number];
 
 // 作業員ごとの単価請求ポリシー

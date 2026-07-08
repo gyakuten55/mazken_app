@@ -13,7 +13,7 @@ import {
 
 const patchUserSchema = z.object({
   name: z.string().min(1).optional(),
-  role: z.enum(["admin", "manager", "office", "viewer", "staff"]).optional(),
+  role: z.enum(["admin", "manager", "office", "schedule", "viewer", "staff"]).optional(),
   branchOfficeId: z.number().int().nullable().optional(),
   staffId: z.number().int().nullable().optional(),
   password: z.string().min(4).max(200).optional(),
