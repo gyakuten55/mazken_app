@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isAuthError } from "@/lib/api-auth";
+import { requireAuth, isAuthError, canEditMoney, canInputAssignment } from "@/lib/api-auth";
 import { assignmentDayPatchSchema, parseId } from "@/lib/validations";
 import {
   parseJsonBody,
@@ -29,12 +29,14 @@ export async function PATCH(
 
   const { status, acknowledged, dailyRateOverride, orderHeadcount } = parsed.data;
 
-  // status / dailyRateOverride / orderHeadcount 変更は admin/manager/office のみ
+  // 議事録 §6: 日別単価(dailyRateOverride)=お金 → 管理者のみ
+  if (dailyRateOverride !== undefined && !canEditMoney(auth.role)) {
+    return NextResponse.json({ error: "単価の編集は管理者のみ可能です" }, { status: 403 });
+  }
+  // status / orderHeadcount の入力（カレンダー入力）は 管理者・番頭・スケジュール入力専用 のみ
   if (
-    (status !== undefined ||
-      dailyRateOverride !== undefined ||
-      orderHeadcount !== undefined) &&
-    !["admin", "manager", "office"].includes(auth.role)
+    (status !== undefined || orderHeadcount !== undefined) &&
+    !canInputAssignment(auth.role)
   ) {
     return NextResponse.json({ error: "権限がありません" }, { status: 403 });
   }

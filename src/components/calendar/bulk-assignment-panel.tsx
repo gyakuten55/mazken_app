@@ -50,12 +50,14 @@ export function BulkAssignmentPanel({
   endDate: endDateProp,
   onClose,
   onSaved,
+  canEditMoney = true,
 }: {
   selectedStaff: SelectedStaff[];
   date: string;
   endDate: string;
   onClose: () => void;
   onSaved: () => void;
+  canEditMoney?: boolean; // §6: お金（単価・加算手当）入力を表示するか（管理者のみ true）
 }) {
   const [sites, setSites] = useState<JobSite[]>([]);
   const [vehicles, setVehicles] = useState<VehicleInfo[]>([]);
@@ -206,6 +208,15 @@ export function BulkAssignmentPanel({
           warnings.push(`重複: ${data.conflicts.length}件`);
         }
         if (data.insuranceWarning) warnings.push("保険種別ミスマッチあり");
+        if (data.qualificationWarning) {
+          const q = data.qualificationWarning;
+          const parts: string[] = [];
+          if (Array.isArray(q.missingQualifications) && q.missingQualifications.length > 0) {
+            parts.push(`必須資格不足(${q.missingQualifications.join("・")})`);
+          }
+          if (q.workCategoryMismatch) parts.push(`作業区分「${q.workCategoryMismatch}」非対応`);
+          warnings.push(parts.length > 0 ? parts.join(" / ") : "資格・作業区分の不一致あり");
+        }
         if (Array.isArray(data.vehicleConflicts) && data.vehicleConflicts.length > 0) {
           warnings.push(`車両重複: ${data.vehicleConflicts.length}件`);
         }
@@ -443,7 +454,8 @@ export function BulkAssignmentPanel({
               className="text-xs h-9"
             />
           </div>
-          {/* 現場別日給 (上書き) */}
+          {/* 現場別日給 (上書き) — §6: お金は管理者のみ */}
+          {canEditMoney && (
           <div>
             <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
               <Coins className="h-3 w-3" /> 現場別日給 (上書き)
@@ -459,6 +471,7 @@ export function BulkAssignmentPanel({
               className="text-xs h-9"
             />
           </div>
+          )}
         </div>
 
         {/* 持ち物 */}
@@ -506,7 +519,8 @@ export function BulkAssignmentPanel({
           />
         </div>
 
-        {/* 加算手当 */}
+        {/* 加算手当 — §6: お金は管理者のみ */}
+        {canEditMoney && (
         <div className="space-y-2">
           <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
             <Coins className="h-3 w-3" /> 加算手当
@@ -617,6 +631,7 @@ export function BulkAssignmentPanel({
             </Button>
           </div>
         </div>
+        )}
 
         {/* 備考 */}
         <div>

@@ -9,7 +9,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 事前断り等の status 変更（入力）は管理者・番頭・スケジュール入力専用が可
+  const auth = await requireRole("admin", "office", "schedule");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

@@ -45,6 +45,8 @@ export type Assignment = {
     siteMemo?: string | null;
     genDoMen?: string | null;
     mapUrl?: string | null;
+    transportation?: string | null;
+    workerPricingPolicy?: string | null; // "possible" / "impossible" / "case_by_case"
     branchOffice: { color: string; name: string };
   };
   vehicle?: {
@@ -72,7 +74,8 @@ export type HeadcountBySite = {
   date: string;
   jobSiteId: number;
   siteName: string;
-  count: number;
+  count: number; // 配置数（scheduled・見割当含む / 事前断り除外）
+  preDeclinedCount?: number; // 事前断りの枠数（合計には入れず内訳に残す）
 };
 
 export type BranchOffice = { id: number; name: string; color: string; code: string };

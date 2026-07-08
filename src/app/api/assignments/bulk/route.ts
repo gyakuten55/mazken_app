@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireRole, isAuthError } from "@/lib/api-auth";
+import { requireRole, isAuthError, canEditMoney } from "@/lib/api-auth";
 import { bulkAssignmentSchema } from "@/lib/validations";
 import { checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
 import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 一括配置の新規作成は管理者・番頭のみ（スケジュール入力専用・個人は不可）
+  const auth = await requireRole("admin", "office");
   if (isAuthError(auth)) return auth;
+  // 議事録 §6: お金（単価・加算手当）は管理者のみ
+  const editMoney = canEditMoney(auth.role);
 
   const body = await parseJsonBody(request);
   if (body === null) return jsonBodyError();
@@ -74,14 +77,34 @@ export async function POST(request: NextRequest) {
 
     const site = await prisma.jobSite.findUnique({
       where: { id: jobSiteId },
-      select: { requiredInsurance: true, name: true },
+      select: {
+        requiredInsurance: true,
+        name: true,
+        // 作業区分 / 必須資格チェック用（C-4）
+        workCategory: true,
+        qualificationBonuses: {
+          where: { isRequired: true },
+          include: { qualification: true },
+        },
+      },
     });
+    // 保険・必須資格・作業区分チェックで共通のスタッフ情報を 1 回で取得
+    const staffList = await prisma.staff.findMany({
+      where: { id: { in: staffIds } },
+      select: {
+        id: true,
+        name: true,
+        hasShaho: true,
+        hasKokuho: true,
+        canChikuro: true,
+        canRegular: true,
+        canSpot: true,
+        staffQualifications: { include: { qualification: true } },
+      },
+    });
+
     let insuranceWarning: { siteRequirement: string; siteName: string; staffNames: string[] } | null = null;
     if (site?.requiredInsurance && site.requiredInsurance !== "any") {
-      const staffList = await prisma.staff.findMany({
-        where: { id: { in: staffIds } },
-        select: { id: true, name: true, hasShaho: true, hasKokuho: true },
-      });
       const mismatched = staffList
         .filter((s) =>
           (site.requiredInsurance === "company_only" && !s.hasShaho) ||
@@ -93,6 +116,52 @@ export async function POST(request: NextRequest) {
           siteRequirement: site.requiredInsurance,
           siteName: site.name,
           staffNames: mismatched,
+        };
+      }
+    }
+
+    // 必須資格不足 / 作業区分不適合チェック（C-4）。
+    // 単一保存(POST /api/assignments)の qualificationWarning と整合する形に、
+    // bulk では「該当スタッフ名一覧」を付与（保険警告の staffNames と同じ流儀）。
+    let qualificationWarning:
+      | {
+          siteName: string;
+          missingQualifications: string[]; // 不足が生じた資格名の集合（誰か 1 人でも不足していれば含む）
+          workCategoryMismatch: string | null; // 作業区分に対応不可なスタッフが居れば該当区分名
+          staffNames: string[]; // 資格不足 or 作業区分不適合に該当したスタッフ名
+        }
+      | null = null;
+    if (site) {
+      const requiredQualifications = site.qualificationBonuses; // isRequired=true のみ
+      const workCategoryLabel: Record<string, string> = {
+        chikuro: "築炉工事",
+        regular: "レギュラー",
+        spot: "スポット",
+      };
+      const cat = site.workCategory;
+      const missingQualSet = new Set<string>();
+      const affectedStaff = new Set<string>();
+      let workCategoryMismatch: string | null = null;
+      for (const s of staffList) {
+        const heldIds = new Set(s.staffQualifications.map((sq) => sq.qualificationId));
+        const lacking = requiredQualifications.filter((qb) => !heldIds.has(qb.qualificationId));
+        const canHandle =
+          (cat === "chikuro" && s.canChikuro) ||
+          (cat === "regular" && s.canRegular) ||
+          (cat === "spot" && s.canSpot);
+        const catMismatch = !canHandle && (cat === "chikuro" || cat === "regular" || cat === "spot");
+        if (lacking.length > 0 || catMismatch) {
+          affectedStaff.add(s.name);
+        }
+        for (const qb of lacking) missingQualSet.add(qb.qualification.name);
+        if (catMismatch) workCategoryMismatch = workCategoryLabel[cat] ?? cat;
+      }
+      if (affectedStaff.size > 0) {
+        qualificationWarning = {
+          siteName: site.name,
+          missingQualifications: Array.from(missingQualSet),
+          workCategoryMismatch,
+          staffNames: Array.from(affectedStaff),
         };
       }
     }
@@ -150,6 +219,7 @@ export async function POST(request: NextRequest) {
     if (
       conflictsByStaff.size > 0 ||
       insuranceWarning ||
+      qualificationWarning ||
       vehicleConflicts.length > 0 ||
       orderHeadcountWarnings.length > 0
     ) {
@@ -158,6 +228,7 @@ export async function POST(request: NextRequest) {
           hasWarnings: true,
           conflicts: Array.from(conflictsByStaff.values()),
           insuranceWarning,
+          qualificationWarning,
           vehicleConflicts,
           orderHeadcountWarnings,
         },
@@ -166,7 +237,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const cleanAllowances = (allowances ?? []).filter((a) => a.name.trim() && a.amount > 0);
+  // 加算手当=お金なので管理者のみ。非管理者は空にする。
+  const cleanAllowances = editMoney
+    ? (allowances ?? []).filter((a) => a.name.trim() && a.amount > 0)
+    : [];
   // 各スタッフに適用する手当を求めるヘルパ。
   // targetStaffIds が空 / 未指定の手当は全員に適用、指定されているならそのスタッフだけ。
   function allowancesFor(staffId: number) {
@@ -193,7 +267,7 @@ export async function POST(request: NextRequest) {
           shiftType: shiftType || "day",
           startTime: startTime || "08:00",
           endTime: endTime || "18:00",
-          dailyRateOverride: dailyRateOverride ?? null,
+          dailyRateOverride: editMoney ? (dailyRateOverride ?? null) : null,
           belongings: belongings ?? null,
           contactName: contactName ?? null,
           contactTel: contactTel ?? null,

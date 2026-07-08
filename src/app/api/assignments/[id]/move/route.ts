@@ -15,7 +15,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 既存配置の移動（入力）は管理者・番頭・スケジュール入力専用が可
+  const auth = await requireRole("admin", "office", "schedule");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

@@ -80,8 +80,19 @@ export async function GET(request: NextRequest) {
 
   // staffロールは集計情報を返さない（他人の情報が漏れないように）
   if (isStaffRole) {
+    // 議事録 §6: 個人(作業員)には金額（単価・加算手当）を返さない。
+    // ただし、同じ現場のメンバーを表示するため、全スタッフの配置情報を（金額抜きで）返す。
+    const sanitizedStaff = staff.map((s) => ({
+      ...s,
+      assignments: s.assignments.map((a) => ({
+        ...a,
+        dailyRateOverride: null,
+        allowances: [],
+        assignmentDays: a.assignmentDays.map((d) => ({ ...d, dailyRateOverride: null })),
+      })),
+    }));
     return NextResponse.json({
-      staff,
+      staff: sanitizedStaff,
       dailyHeadcounts: [],
       headcountBySite: [],
       unassignedAssignments: [],
@@ -183,6 +194,39 @@ export async function GET(request: NextRequest) {
         })
       : [];
 
+  // 車両の二重利用チェック（同日に別現場で同じ車が使われていないか）
+  // 議事録 §7: 車両重複の警告
+  const vehicleUsages = await prisma.assignmentDay.findMany({
+    where: {
+      date: { gte: startDate, lte: endDate },
+      status: "scheduled",
+      assignment: { vehicleId: { not: null } },
+    },
+    select: {
+      date: true,
+      assignment: { select: { vehicleId: true, jobSiteId: true } },
+    },
+  });
+
+  type VehicleKey = string; // `${date}|${vehicleId}`
+  const vehicleMap = new Map<VehicleKey, Set<number>>(); // Map<key, Set<jobSiteId>>
+  const vehicleConflicts: { date: string; vehicleId: number }[] = [];
+
+  for (const u of vehicleUsages) {
+    const vid = u.assignment.vehicleId!;
+    const key = `${u.date}|${vid}`;
+    const sites = vehicleMap.get(key) ?? new Set<number>();
+    sites.add(u.assignment.jobSiteId);
+    vehicleMap.set(key, sites);
+  }
+
+  for (const [key, sites] of vehicleMap.entries()) {
+    if (sites.size > 1) {
+      const [date, vid] = key.split("|");
+      vehicleConflicts.push({ date, vehicleId: parseInt(vid) });
+    }
+  }
+
   return NextResponse.json({
     staff,
     dailyHeadcounts: headcounts.map((h) => ({
@@ -192,5 +236,6 @@ export async function GET(request: NextRequest) {
     headcountBySite,
     unassignedAssignments,
     sitesInRange,
+    vehicleConflicts,
   });
 }

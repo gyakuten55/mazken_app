@@ -14,6 +14,8 @@ import {
   X,
   Users,
   Building2,
+  Truck,
+  AlertCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -41,9 +43,15 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 
 export function CalendarView({
   branchOffices,
+  canEditMoney = false,
+  userRole = "staff",
 }: {
   branchOffices: BranchOffice[];
+  canEditMoney?: boolean; // 管理者のみ true。お金（単価・加算手当）入力UIの表示制御
+  userRole?: string;
 }) {
+  const isReadOnly = userRole === "staff";
+  const canModifyAssignments = userRole === "admin" || userRole === "office";
   const router = useRouter();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [today, setToday] = useState("");
@@ -79,10 +87,14 @@ export function CalendarView({
   const [unassignedAssignments, setUnassignedAssignments] = useState<Assignment[]>([]);
   const [headcounts, setHeadcounts] = useState<HeadcountData[]>([]);
   const [headcountBySite, setHeadcountBySite] = useState<HeadcountBySite[]>([]);
+  const [vehicleConflicts, setVehicleConflicts] = useState<{ date: string; vehicleId: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedBranches, setSelectedBranches] = useState<number[]>([]);
   const [panelOpen, setPanelOpen] = useState(false);
+  // C-8: 配置モーダルをヘッダ掴みで移動可能にする（中央配置からの transform オフセット）
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const panelDragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
   const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -138,10 +150,18 @@ export function CalendarView({
     setStaffPickerSearch("");
   }
 
-  // --- Bulk assignment mode ---
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<number>>(new Set());
   const [bulkPanelOpen, setBulkPanelOpen] = useState(false);
+
+  // --- C-2: Drag & Drop assignment from "Available Staff" list ---
+  const [draggingStaffId, setDraggingStaffId] = useState<number | null>(null);
+  const [dndPanelOpen, setDndPanelOpen] = useState(false);
+  const [availableStaffDate, setAvailableStaffDate] = useState<string>("");
+  // 入力された日付がない場合は今日を初期値にする
+  useEffect(() => {
+    if (!availableStaffDate) setAvailableStaffDate(formatDateISO(new Date()));
+  }, [availableStaffDate]);
 
   function toggleBulkStaff(id: number) {
     setBulkSelectedIds((prev) => {
@@ -219,10 +239,11 @@ export function CalendarView({
       try {
         const res = await fetch(`/api/calendar?${params}`);
         const data = await res.json();
-        setStaffRows(data.staff);
-        setHeadcounts(data.dailyHeadcounts);
-        setHeadcountBySite(data.headcountBySite);
+        setStaffRows(data.staff || []);
+        setHeadcounts(data.dailyHeadcounts || []);
+        setHeadcountBySite(data.headcountBySite || []);
         setUnassignedAssignments(data.unassignedAssignments || []);
+        setVehicleConflicts(data.vehicleConflicts || []);
       } catch (err) {
         console.error("Failed to fetch calendar data:", err);
       } finally {
@@ -399,6 +420,39 @@ export function CalendarView({
     setRangePopoverOpen(false);
   }
 
+  // C-8: モーダルを閉じたら次回は中央に戻す
+  useEffect(() => {
+    if (!panelOpen) setPanelPos(null);
+  }, [panelOpen]);
+
+  // C-8: ヘッダ掴みでモーダルをドラッグ移動（ボタン等の上では発火しない）
+  function startPanelDrag(e: React.PointerEvent) {
+    if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+    e.preventDefault();
+    const base = panelPos ?? { x: 0, y: 0 };
+    panelDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      baseX: base.x,
+      baseY: base.y,
+    };
+    function onMove(ev: PointerEvent) {
+      const d = panelDragRef.current;
+      if (!d) return;
+      setPanelPos({
+        x: d.baseX + (ev.clientX - d.startX),
+        y: d.baseY + (ev.clientY - d.startY),
+      });
+    }
+    function onUp() {
+      panelDragRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   function toggleBranch(id: number) {
     setSelectedBranches((prev) =>
       prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]
@@ -462,6 +516,25 @@ export function CalendarView({
   function isPreDeclinedOn(a: Assignment, date: string): boolean {
     return a.assignmentDays.some((d) => d.date === date && d.status === "pre_declined");
   }
+
+  // 同じ現場・同じ日のメンバーを検索（作業員向けに「誰と行くか」を表示）
+  const getTeamForSite = useCallback((siteId: number, date: string) => {
+    const team: { staffName: string; startTime: string; branchColor: string }[] = [];
+    for (const s of staffRows) {
+      for (const a of s.assignments) {
+        if (a.jobSiteId === siteId) {
+          if (a.assignmentDays.some(d => d.date === date && d.status === "scheduled")) {
+            team.push({
+              staffName: s.displayName || s.name,
+              startTime: a.startTime,
+              branchColor: s.branchOffice.color,
+            });
+          }
+        }
+      }
+    }
+    return team;
+  }, [staffRows]);
 
   // 日付 → 未割当配置の一覧（日付ヘッダー Popover でその日の未割当を表示するため）
   const unassignedByDate = useMemo(() => {
@@ -939,6 +1012,90 @@ export function CalendarView({
     return rows;
   }, [siteRows, workCategoryFilter, staffFilterMode, staffFilter, selectedStaffIds]);
 
+  // 日付列ごとの必要人数合計（議事録 C-3「必要人数を縦軸の合計として表示」）。
+  // 表示中の現場行から集計し、見割当(staffId=null,scheduled)は加算・事前断り(pre_declined)は除外する。
+  // 断り枠は合計には入れないが、内訳として declined を別途返し「断りN」表示に使う。
+  const columnTotals = useMemo(() => {
+    const map = new Map<string, { needed: number; declined: number }>();
+    for (const row of filteredSiteRows) {
+      for (const [date, entries] of row.staffByDate) {
+        const cur = map.get(date) ?? { needed: 0, declined: 0 };
+        for (const e of entries) {
+          if (e.dayStatus === "pre_declined") cur.declined += 1;
+          else cur.needed += 1;
+        }
+        map.set(date, cur);
+      }
+    }
+    return map;
+  }, [filteredSiteRows]);
+
+  const grandTotalNeeded = useMemo(
+    () => Array.from(columnTotals.values()).reduce((s, c) => s + c.needed, 0),
+    [columnTotals],
+  );
+
+  // スタッフを現場に割り当て（ドラッグ&ドロップで実行）
+  // 議事録: 「空きスタッフを上から下へドラッグして現場に「落とす」操作にしたい」
+  const assignStaffToSite = useCallback(
+    async (staffId: number, siteId: number, date: string, force = false) => {
+      // 1. その現場・日付に「未割当」の枠があれば、そこを更新する
+      const siteRow = siteRows.find((r) => r.id === siteId);
+      const dayStaff = siteRow?.staffByDate.get(date) || [];
+      const unassignedEntry = dayStaff.find((e) => e.staffId == null);
+
+      if (unassignedEntry) {
+        return assignUnassignedToStaff(unassignedEntry.assignment.id, staffId, force);
+      }
+
+      // 2. なければ新規作成
+      setDropAssigning(true);
+      try {
+        const res = await fetch("/api/assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            staffId,
+            jobSiteId: siteId,
+            startDate: date,
+            endDate: date,
+            force,
+          }),
+        });
+
+        if (res.status === 409) {
+          const data = await res.json().catch(() => ({}));
+          const conflictNames = (data.conflicts as { siteName: string }[] | undefined)
+            ?.map((c) => c.siteName)
+            .join(", ");
+          const insuranceMsg = data.insuranceWarning ? "保険種別不一致" : "";
+          const orderOverflowMsg =
+            Array.isArray(data.orderHeadcountWarnings) && data.orderHeadcountWarnings.length > 0
+              ? `オーダー人数超過 ${data.orderHeadcountWarnings.length}日`
+              : "";
+          const msg = [conflictNames && `競合: ${conflictNames}`, insuranceMsg, orderOverflowMsg]
+            .filter(Boolean)
+            .join(" / ");
+          if (window.confirm(`警告 (${msg})\nそれでも割り当てますか？`)) {
+            return assignStaffToSite(staffId, siteId, date, true);
+          }
+          return;
+        }
+
+        if (!res.ok) {
+          alert("作成に失敗しました");
+          return;
+        }
+        await fetchData(true);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setDropAssigning(false);
+      }
+    },
+    [siteRows, assignUnassignedToStaff, fetchData]
+  );
+
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)] md:h-screen relative">
       {/* Toolbar */}
@@ -1046,7 +1203,13 @@ export function CalendarView({
           role="group"
           aria-label="表示する期間"
         >
-          {[1, 2, 4].map((w) => (
+          {[
+            { w: 1, label: "1週" },
+            { w: 2, label: "2週" },
+            { w: 4, label: "4週" },
+            { w: 8, label: "2ヶ月" },
+            { w: 13, label: "3ヶ月" },
+          ].map(({ w, label }, i) => (
             <button
               key={w}
               onClick={() => {
@@ -1054,15 +1217,16 @@ export function CalendarView({
                 setWeeksToShow(w);
               }}
               aria-pressed={!customRange && weeksToShow === w}
+              title={`約${label}を表示（${w}週間）`}
               className={cn(
-                "px-3 md:px-4 text-sm font-medium transition-colors",
-                w > 1 && "border-l",
+                "px-2.5 md:px-3 text-sm font-medium transition-colors whitespace-nowrap",
+                i > 0 && "border-l",
                 !customRange && weeksToShow === w
                   ? "bg-primary text-primary-foreground"
                   : "hover:bg-muted",
               )}
             >
-              {w}週
+              {label}
             </button>
           ))}
         </div>
@@ -1102,18 +1266,38 @@ export function CalendarView({
         </div>
 
         {/* Bulk mode toggle */}
-        <button
-          onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
-          aria-pressed={bulkMode}
-          className={cn(
-            "h-10 px-3 md:px-4 rounded-lg text-sm font-medium transition-colors border",
-            bulkMode
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-muted",
-          )}
-        >
-          一括配置
-        </button>
+        {canModifyAssignments && (
+          <button
+            onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
+            aria-pressed={bulkMode}
+            className={cn(
+              "h-10 px-3 md:px-4 rounded-lg text-sm font-medium transition-colors border",
+              bulkMode
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border hover:bg-muted",
+            )}
+          >
+            一括配置
+          </button>
+        )}
+
+        {/* C-2: D&D Mode Toggle */}
+        {canModifyAssignments && (
+          <button
+            onClick={() => setDndPanelOpen(!dndPanelOpen)}
+            aria-pressed={dndPanelOpen}
+            className={cn(
+              "h-10 px-3 md:px-4 rounded-lg text-sm font-medium transition-colors border flex items-center gap-1.5",
+              dndPanelOpen
+                ? "bg-amber-500 text-white border-amber-600 shadow-inner"
+                : "border-border hover:bg-muted",
+            )}
+            title="空きスタッフをドラッグして配置するモード"
+          >
+            <Users className="h-4 w-4" />
+            D&D配置
+          </button>
+        )}
 
         {/* 作業区分フィルタ（現場ビューのみ） */}
         {viewMode === "site" && (
@@ -1371,6 +1555,65 @@ export function CalendarView({
         )}
       </div>
 
+      {/* C-2: Drag & Drop Available Staff Panel */}
+      {dndPanelOpen && (
+        <div className="border-b bg-amber-50/40 px-2 md:px-3 py-2 flex items-center gap-3 overflow-x-auto shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <Users className="h-4 w-4 text-amber-700" />
+            <span className="text-xs font-bold text-amber-800 whitespace-nowrap">空きスタッフ検索:</span>
+            <input
+              type="date"
+              value={availableStaffDate}
+              onChange={(e) => setAvailableStaffDate(e.target.value)}
+              className="h-8 border border-amber-300 rounded px-2 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+          </div>
+          <div className="h-4 w-px bg-amber-200 shrink-0" />
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {(() => {
+              const freeStaff = staffRows.filter(s => {
+                // その日に scheduled な配置がない人を「空き」とみなす
+                return !s.assignments.some(a => 
+                  a.assignmentDays.some(d => d.date === availableStaffDate && d.status === "scheduled")
+                );
+              });
+              if (freeStaff.length === 0) {
+                return <span className="text-[10px] text-amber-600 italic">この日は全員配置済みです</span>;
+              }
+              return freeStaff.map(s => (
+                <div
+                  key={s.id}
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggingStaffId(s.id);
+                    e.dataTransfer.setData("text/plain", String(s.id));
+                    e.dataTransfer.effectAllowed = "copyMove";
+                    // ゴーストイメージのカスタマイズ（任意）
+                  }}
+                  onDragEnd={() => setDraggingStaffId(null)}
+                  className="shrink-0 flex items-center gap-1.5 rounded-full border border-amber-300 bg-white px-2 py-1 text-[11px] hover:bg-amber-100 cursor-grab active:cursor-grabbing shadow-sm"
+                >
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: s.branchOffice.color }}
+                  />
+                  <span className="font-medium text-amber-900">{s.name}</span>
+                </div>
+              ));
+            })()}
+          </div>
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDndPanelOpen(false)}
+            className="h-8 w-8 p-0 text-amber-700 hover:bg-amber-100 shrink-0"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* 未割当は staff ビューでは日付ヘッダーの Popover で扱う。
           site ビューだけ「未割当あり現場」のサマリを上部に固定表示する。 */}
       {viewMode === "site" && (() => {
@@ -1439,6 +1682,10 @@ export function CalendarView({
                 </th>
                 {dateMeta.map(({ date, dateStr, sunday, weekend, holiday, isRedDay }, dateIndex) => {
                   const hc = getHeadcount(dateStr);
+                  const declinedTotal = getSiteBreakdown(dateStr).reduce(
+                    (s, x) => s + (x.preDeclinedCount ?? 0),
+                    0,
+                  );
                   const isToday = dateStr === today;
                   const intensity = hc > 0 ? Math.min(hc / maxHeadcount, 1) : 0;
                   const isWeekBoundary = isCompact && dateIndex > 0 && dateIndex % 7 === 0;
@@ -1519,12 +1766,26 @@ export function CalendarView({
                                 {getSiteBreakdown(dateStr).map((site) => (
                                   <div key={site.jobSiteId} className="flex items-center justify-between text-xs px-1 py-0.5">
                                     <span className="truncate mr-2">{site.siteName}</span>
-                                    <span className="font-bold tabular-nums text-primary shrink-0">{site.count}名</span>
+                                    <span className="font-bold tabular-nums text-primary shrink-0">
+                                      {site.count}名
+                                      {(site.preDeclinedCount ?? 0) > 0 && (
+                                        <span className="ml-1 text-[10px] font-normal text-rose-500 line-through" title={`事前断り ${site.preDeclinedCount}名`}>
+                                          断{site.preDeclinedCount}
+                                        </span>
+                                      )}
+                                    </span>
                                   </div>
                                 ))}
                                 <div className="border-t pt-1 mt-1 flex items-center justify-between text-xs px-1 font-medium">
                                   <span>合計</span>
-                                  <span className="tabular-nums text-primary">{hc}名</span>
+                                  <span className="tabular-nums text-primary">
+                                    {hc}名
+                                    {declinedTotal > 0 && (
+                                      <span className="ml-1 text-[10px] font-normal text-rose-500 line-through" title={`事前断り ${declinedTotal}名（合計には含めない）`}>
+                                        断{declinedTotal}
+                                      </span>
+                                    )}
+                                  </span>
                                 </div>
                               </div>
                             )}
@@ -1620,7 +1881,11 @@ export function CalendarView({
                     // 期間内の代表日（最初の日）の配置済み人数で必要人数バッジを表示
                     const firstDateStr = formatDateISO(allDates[0]);
                     const dayStaffFirst = siteRow.staffByDate.get(firstDateStr) ?? [];
-                    const scheduledFirst = dayStaffFirst.length;
+                    // 事前断り(pre_declined)は「断った枠＝人を入れない」ため配置数に含めない
+                    // （議事録 C-3: 事前断りは必要人数の合計から除外）。表示自体は取消線で残す。
+                    const scheduledFirst = dayStaffFirst.filter(
+                      (e) => e.dayStatus !== "pre_declined",
+                    ).length;
                     const requiredHeadcount = siteRow.requiredHeadcount ?? null;
                     // 先頭日のオーダー人数（日毎に変わる）
                     const orderHeadcount = siteRow.orderByDate.get(firstDateStr) ?? null;
@@ -1712,11 +1977,44 @@ export function CalendarView({
                               isCellWeekBoundary && "border-l-2 border-l-primary/20",
                               isSiteCellInDragRange(siteRow.id, dateStr) && "!bg-primary/15 ring-1 ring-primary/40",
                               isSiteDragging && "cursor-crosshair",
+                              // C-2 DnD visual feedback
+                              draggingStaffId !== null && dateStr === availableStaffDate && dropTargetCellKey === `${siteRow.id}-${dateStr}` && "ring-2 ring-inset ring-amber-500 bg-amber-100",
+                              draggingStaffId !== null && dateStr !== availableStaffDate && "opacity-40 cursor-not-allowed",
                             )}
-                            onMouseDown={(e) => handleSiteCellMouseDown(siteRow.id, dateStr, e)}
-                            onMouseEnter={() => handleSiteCellMouseEnter(siteRow.id, dateStr)}
+                            onMouseDown={(e) => {
+                              if (isReadOnly) return;
+                              handleSiteCellMouseDown(siteRow.id, dateStr, e);
+                            }}
+                            onMouseEnter={() => {
+                              if (isReadOnly) return;
+                              handleSiteCellMouseEnter(siteRow.id, dateStr);
+                            }}
+                            onDragOver={(e) => {
+                              if (isReadOnly) return;
+                              if (draggingStaffId !== null) {
+                                if (dateStr === availableStaffDate) {
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "copy";
+                                  const cellKey = `${siteRow.id}-${dateStr}`;
+                                  if (dropTargetCellKey !== cellKey) setDropTargetCellKey(cellKey);
+                                }
+                              }
+                            }}
+                            onDragLeave={() => {
+                              if (isReadOnly) return;
+                              if (draggingStaffId !== null) {
+                                setDropTargetCellKey(null);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (isReadOnly) return;
+                              if (draggingStaffId !== null && dateStr === availableStaffDate) {
+                                e.preventDefault();
+                                assignStaffToSite(draggingStaffId, siteRow.id, dateStr);
+                              }
+                            }}
                             onClick={() => {
-                              if (isSiteDragging) return;
+                              if (isReadOnly || isSiteDragging) return;
                               setSelectedStaffId(null);
                               setSelectedSiteId(siteRow.id);
                               setSelectedDate(dateStr);
@@ -1733,45 +2031,57 @@ export function CalendarView({
                                   <div
                                     key={entry.assignment.id}
                                     className={cn(
-                                      "mx-0.5 rounded cursor-pointer hover:brightness-95 transition-all",
+                                      "mx-0.5 rounded cursor-pointer hover:brightness-95 transition-all relative",
                                       isCompact ? "px-1 py-0.5" : "px-1.5 py-1",
                                       isUnassigned && "border border-dashed border-amber-500 bg-amber-50",
                                       isPreDeclined && "opacity-60 line-through bg-rose-50 border border-rose-300 [&_*]:text-rose-700",
+                                      entry.assignment.vehicleId && vehicleConflicts.some(vc => vc.date === dateStr && vc.vehicleId === entry.assignment.vehicleId) && !isPreDeclined && "ring-1 ring-orange-500 ring-inset",
                                     )}
                                     style={
                                       isUnassigned || isPreDeclined
                                         ? undefined
                                         : { backgroundColor: entry.branchColor + "20" }
                                     }
-                                    title={isPreDeclined ? "事前断り" : undefined}
-                                    onMouseDown={(e) => e.stopPropagation()}
+                                    title={isPreDeclined ? "事前断り" : (entry.assignment.vehicleId && vehicleConflicts.some(vc => vc.date === dateStr && vc.vehicleId === entry.assignment.vehicleId)) ? "車両重複警告" : undefined}
+                                    onMouseDown={(e) => {
+                                      if (isReadOnly) return;
+                                      e.stopPropagation();
+                                    }}
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      if (isReadOnly) return;
                                       handleAssignmentClick(entry.assignment, entry.staffId);
                                     }}
-                                    onContextMenu={(e) =>
-                                      handleContextMenu(e, entry.assignment, entry.staffId, dateStr)
-                                    }
+                                    onContextMenu={(e) => {
+                                      if (isReadOnly) return;
+                                      handleContextMenu(e, entry.assignment, entry.staffId, dateStr);
+                                    }}
                                   >
                                     {isCompact ? (
-                                      <div className={cn("text-[9px] leading-tight font-medium truncate", isUnassigned && "text-amber-700")}>
+                                      <div className={cn("text-[9px] leading-tight font-medium truncate relative", isUnassigned && "text-amber-700")}>
                                         {isPreDeclined && "🚫 "}{entry.staffName}
+                                        {entry.assignment.vehicleId && vehicleConflicts.some(vc => vc.date === dateStr && vc.vehicleId === entry.assignment.vehicleId) && !isPreDeclined && (
+                                          <Truck className="h-1.5 w-1.5 text-orange-600 absolute right-0 bottom-0" />
+                                        )}
                                       </div>
                                     ) : (
-                                      <>
+                                      <div className="relative">
                                         <div className={cn("text-[11px] leading-tight font-medium truncate flex items-center gap-1", isUnassigned && "text-amber-700")}>
                                           {isPreDeclined && <span className="text-[9px]">🚫</span>}
-                                          {entry.staffName}
+                                          <span className="truncate">{entry.staffName}</span>
                                           {entry.assignmentType === "business_trip" && (
                                             <span className="text-[8px] px-0.5 rounded-sm shrink-0" style={{ backgroundColor: (isUnassigned ? "#F59E0B" : entry.branchColor) + "30" }}>
                                               出張
                                             </span>
                                           )}
+                                          {entry.assignment.vehicleId && vehicleConflicts.some(vc => vc.date === dateStr && vc.vehicleId === entry.assignment.vehicleId) && !isPreDeclined && (
+                                            <Truck className="h-2.5 w-2.5 text-orange-600 shrink-0" title="車両重複警告" />
+                                          )}
                                         </div>
                                         <div className="text-[9px] text-muted-foreground/70 leading-tight">
                                           {entry.assignment.startTime}〜{entry.assignment.endTime}
                                         </div>
-                                      </>
+                                      </div>
                                     )}
                                   </div>
                                 );
@@ -1889,15 +2199,20 @@ export function CalendarView({
                             draggingUnassignedId !== null && !dropEligible && "opacity-60",
                           )}
                           onMouseEnter={() => {
+                            if (isReadOnly) return;
                             // hoveredCell state は廃止。ドラッグ系の handler のみ呼ぶ
                             handleCellMouseEnter(staff.id, dateStr);
                             handleCellMouseEnterForMove(staff.id, dateStr);
                           }}
-                          onMouseDown={(e) => handleCellMouseDown(staff.id, dateStr, e)}
+                          onMouseDown={(e) => {
+                            if (isReadOnly) return;
+                            handleCellMouseDown(staff.id, dateStr, e);
+                          }}
                           onClick={() => {
-                            if (!isDragging) handleCellClick(staff.id, dateStr);
+                            if (isReadOnly || !isDragging) handleCellClick(staff.id, dateStr);
                           }}
                           onDragOver={(e) => {
+                            if (isReadOnly) return;
                             if (draggingUnassignedId !== null && dropEligible) {
                               e.preventDefault();
                               e.dataTransfer.dropEffect = "move";
@@ -1905,9 +2220,11 @@ export function CalendarView({
                             }
                           }}
                           onDragLeave={() => {
+                            if (isReadOnly) return;
                             if (dropTargetCellKey === cellKey) setDropTargetCellKey(null);
                           }}
                           onDrop={(e) => {
+                            if (isReadOnly) return;
                             if (draggingUnassignedId !== null && dropEligible) {
                               e.preventDefault();
                               const id = draggingUnassignedId;
@@ -1931,6 +2248,9 @@ export function CalendarView({
                               const isEnd = pos === "end" || pos === "single";
                               const isMiddle = pos === "middle";
                               const isPreDeclined = isPreDeclinedOn(a, dateStr);
+                              const hasVehicleConflict = a.vehicleId && vehicleConflicts.some(
+                                (vc) => vc.date === dateStr && vc.vehicleId === a.vehicleId
+                              );
 
                               const isBeingMoved = isMoveDragging && moveDrag!.assignment.id === a.id;
 
@@ -1946,28 +2266,41 @@ export function CalendarView({
                                     isMiddle && "-mx-px",
                                     isBeingMoved && "opacity-40 ring-2 ring-primary/50 ring-dashed",
                                     isPreDeclined && "opacity-60 line-through border border-rose-300 [&_*]:text-rose-700",
+                                    hasVehicleConflict && !isPreDeclined && "ring-1 ring-orange-500 ring-inset",
                                   )}
                                   style={{
                                     backgroundColor: isPreDeclined ? "#FFE4E6" : color + "20",
                                   }}
-                                  title={isPreDeclined ? "事前断り" : undefined}
+                                  title={isPreDeclined ? "事前断り" : hasVehicleConflict ? "車両重複警告" : undefined}
                                   onMouseDown={(e) => {
+                                    if (isReadOnly) return;
                                     e.stopPropagation();
                                     handleCardDragStart(a, staff.id, dateStr, e);
                                   }}
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (isReadOnly) {
+                                      // 作業員向け: 自分の詳細ページへ飛ばす？
+                                      // router.push(`/assignments/${a.id}`);
+                                      return;
+                                    }
                                     if (!isMoveDragging) handleAssignmentClick(a, staff.id);
                                   }}
-                                  onContextMenu={(e) =>
-                                    handleContextMenu(e, a, staff.id, dateStr)
-                                  }
+                                  onContextMenu={(e) => {
+                                    if (isReadOnly) return;
+                                    handleContextMenu(e, a, staff.id, dateStr);
+                                  }}
                                 >
                                   {isCompact ? (
-                                    <div className={cn("px-1 py-0.5", !isStart && "h-[18px]")}>
+                                    <div className={cn("px-1 py-0.5 relative", !isStart && "h-[18px]")}>
                                       {isStart && (
                                         <div className="font-medium truncate text-[9px] leading-tight">
                                           {a.jobSite.name}
+                                        </div>
+                                      )}
+                                      {hasVehicleConflict && !isPreDeclined && (
+                                        <div className="absolute right-0.5 bottom-0.5">
+                                          <Truck className="h-2 w-2 text-orange-600" />
                                         </div>
                                       )}
                                     </div>
@@ -1987,17 +2320,64 @@ export function CalendarView({
                                                 出張
                                               </span>
                                             )}
+                                            {hasVehicleConflict && !isPreDeclined && (
+                                              <Truck className="h-2.5 w-2.5 text-orange-600 shrink-0" title="車両重複警告" />
+                                            )}
                                           </div>
-                                          <div className="text-muted-foreground/70 text-[10px]">
-                                            {a.startTime}-{a.endTime}
+                                          <div className="text-muted-foreground/70 text-[10px] flex items-center justify-between">
+                                            <span>{a.startTime}-{a.endTime}</span>
+                                            {isReadOnly && (
+                                              <Popover>
+                                                <PopoverTrigger asChild>
+                                                  <button
+                                                    className="p-1 -mr-1 hover:bg-black/5 rounded transition-colors text-primary flex items-center gap-0.5"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    title="現場メンバーを確認"
+                                                  >
+                                                    <Users className="h-3 w-3" />
+                                                    <span className="text-[9px] font-bold">
+                                                      {getTeamForSite(a.jobSiteId, dateStr).length}
+                                                    </span>
+                                                  </button>
+                                                </PopoverTrigger>
+                                                <PopoverContent className="w-56 p-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+                                                  <div className="flex items-center gap-2 border-b pb-1.5 mb-1.5">
+                                                    <Users className="h-4 w-4 text-primary" />
+                                                    <h3 className="text-xs font-bold truncate">{a.jobSite.name}</h3>
+                                                  </div>
+                                                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                                                    {getTeamForSite(a.jobSiteId, dateStr).map((member, i) => (
+                                                      <div key={i} className="flex items-center justify-between text-[11px] py-0.5 border-b border-muted/30 last:border-0">
+                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                          <div
+                                                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                                                            style={{ backgroundColor: member.branchColor }}
+                                                          />
+                                                          <span className="font-medium truncate">{member.staffName}</span>
+                                                        </div>
+                                                          <span className="text-muted-foreground shrink-0">{member.startTime}着</span>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                </PopoverContent>
+                                              </Popover>
+                                            )}
                                           </div>
                                         </div>
                                       )}
                                       {isMiddle && (
-                                        <div className="h-[34px]" />
+                                        <div className="h-[34px] flex items-center justify-end px-1">
+                                          {hasVehicleConflict && !isPreDeclined && (
+                                            <Truck className="h-2.5 w-2.5 text-orange-600" />
+                                          )}
+                                        </div>
                                       )}
                                       {isEnd && !isStart && (
-                                        <div className="h-[34px]" />
+                                        <div className="h-[34px] flex items-center justify-end px-1">
+                                          {hasVehicleConflict && !isPreDeclined && (
+                                            <Truck className="h-2.5 w-2.5 text-orange-600" />
+                                          )}
+                                        </div>
                                       )}
                                     </>
                                   )}
@@ -2032,6 +2412,65 @@ export function CalendarView({
                 })()
               ))}
             </tbody>
+            {/* C-3: 必要人数の合計行（縦軸＝日付列ごとの合計）。見割当は加算・事前断りは除外。 */}
+            {viewMode === "site" && !loading && filteredSiteRows.length > 0 && (
+              <tfoot className="sticky bottom-0 z-10">
+                <tr>
+                  <td
+                    className={cn(
+                      "border-t-2 border-r bg-card sticky left-0 z-20 font-semibold text-muted-foreground whitespace-nowrap",
+                      isCompact ? "p-1 text-[10px]" : "p-1.5 text-xs",
+                    )}
+                    title={`期間内の必要人数 合計 ${grandTotalNeeded}名（見割当含む・事前断り除外）`}
+                  >
+                    必要人数 合計
+                  </td>
+                  {dateMeta.map(({ dateStr, weekend, isRedDay }) => {
+                    const ct = columnTotals.get(dateStr) ?? { needed: 0, declined: 0 };
+                    const isToday = dateStr === today;
+                    return (
+                      <td
+                        key={dateStr}
+                        className={cn(
+                          "border-t-2 border-r text-center bg-card",
+                          isCompact ? "p-0.5" : "p-1",
+                          isRedDay && "bg-red-50",
+                          weekend && !isRedDay && "bg-blue-50",
+                          isToday && "!bg-primary/5",
+                        )}
+                        title={
+                          `必要 ${ct.needed}名（見割当含む・事前断り除外）` +
+                          (ct.declined > 0 ? ` / 事前断り ${ct.declined}名` : "")
+                        }
+                      >
+                        {ct.needed > 0 ? (
+                          <span
+                            className={cn(
+                              "font-bold tabular-nums text-primary",
+                              isCompact ? "text-[10px]" : "text-xs",
+                            )}
+                          >
+                            {ct.needed}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-[10px]">–</span>
+                        )}
+                        {ct.declined > 0 && (
+                          <span
+                            className={cn(
+                              "ml-0.5 text-rose-500 line-through tabular-nums",
+                              isCompact ? "text-[8px]" : "text-[9px]",
+                            )}
+                          >
+                            {ct.declined}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
@@ -2121,9 +2560,12 @@ export function CalendarView({
         >
           <div
             className="pointer-events-auto w-full sm:w-[min(96vw,1080px)] max-w-full max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-4rem)] animate-in fade-in duration-150"
+            style={panelPos ? { transform: `translate(${panelPos.x}px, ${panelPos.y}px)` } : undefined}
             onClick={(e) => e.stopPropagation()}
           >
             <AssignmentPanel
+              onHeaderPointerDown={startPanelDrag}
+              canEditMoney={canEditMoney}
               staffId={selectedStaffId}
               preselectedSiteId={selectedSiteId}
               date={selectedDate}
@@ -2214,6 +2656,7 @@ export function CalendarView({
             onClick={(e) => e.stopPropagation()}
           >
             <BulkAssignmentPanel
+              canEditMoney={canEditMoney}
               selectedStaff={staffRows
                 .filter((s) => bulkSelectedIds.has(s.id))
                 .map((s) => ({

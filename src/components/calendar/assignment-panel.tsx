@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { X, Trash2, MapPin, Clock, CalendarDays, AlertTriangle, ShieldAlert, Sun, Moon, Truck, Coins, StickyNote, Info, Users } from "lucide-react";
+import { X, Trash2, MapPin, Clock, CalendarDays, AlertTriangle, ShieldAlert, Sun, Moon, Truck, Coins, StickyNote, Info, Users, Maximize2 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -211,6 +212,20 @@ function extractLatLng(url: string): { lat: string; lng: string; zoom: string } 
  * - そうでなければ address を q= で渡し、ズーム 18 で建物レベル表示
  * - 外部リンクボタンで Google マップ本体を新規タブで開ける
  */
+// C-8: テキスト欄を大きい専用ダイアログで編集するための「拡大」ボタン
+function ExpandButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5 shrink-0"
+      title="拡大して入力"
+    >
+      <Maximize2 className="h-3 w-3" /> 拡大
+    </button>
+  );
+}
+
 function SiteMap({
   address,
   mapUrl,
@@ -467,6 +482,11 @@ type JobSite = {
   belongings?: string | null;
   contactName1?: string | null;
   contactTel1?: string | null;
+  address?: string | null;
+  mapUrl?: string | null;
+  transportation?: string | null;
+  workerPricingPolicy?: string | null; // "possible"=可 / "impossible"=不可 / "case_by_case"=都度相談
+  workCategory?: string | null; // "chikuro" / "regular" / "spot"
   qualificationBonuses?: {
     qualificationId: number;
     isRequired?: boolean;
@@ -490,6 +510,9 @@ type StaffInfo = {
   hasShaho?: boolean;
   hasKokuho?: boolean;
   hasIchiriOyakata?: boolean;
+  canChikuro?: boolean;
+  canRegular?: boolean;
+  canSpot?: boolean;
   branchOfficeId?: number;
   branchOffice: { name: string; color: string };
   staffQualifications?: { qualification: { id: number; name: string } }[];
@@ -514,6 +537,14 @@ type InsuranceWarning = {
   siteName: string;
 };
 
+// C-4: サーバが 409 で返す資格・作業区分の不適合（必須資格不足 / 作業区分非対応）
+type QualificationWarning = {
+  siteName: string;
+  missingQualifications: string[];
+  workCategoryMismatch: string | null;
+  staffNames?: string[]; // bulk 経路のみ
+};
+
 type VehicleConflictWarning = {
   plateNumber: string;
   vehicleName: string | null;
@@ -525,6 +556,7 @@ type SiteRequirements = {
   requiredInsurance: string | null | undefined;
   branchOfficeId: number | undefined;
   requiredQualificationIds: number[];
+  workCategory?: string | null; // "chikuro" / "regular" / "spot"
 };
 
 // 配置先現場の要件をスタッフが満たしているかを判定。
@@ -557,6 +589,26 @@ function staffMeetsSiteRequirements(
       reasons.push(`資格不足(${missing.length})`);
     }
   }
+  // C-4: 現場の作業区分にスタッフが対応していなければ警告（未設定=従来どおり対応可とみなす）
+  if (req.workCategory) {
+    const can =
+      req.workCategory === "chikuro"
+        ? staff.canChikuro
+        : req.workCategory === "regular"
+          ? staff.canRegular
+          : req.workCategory === "spot"
+            ? staff.canSpot
+            : true;
+    if (can === false) {
+      const label =
+        req.workCategory === "chikuro"
+          ? "築炉"
+          : req.workCategory === "regular"
+            ? "レギュラー"
+            : "スポット";
+      reasons.push(`${label}不可`);
+    }
+  }
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -570,6 +622,8 @@ export function AssignmentPanel({
   cachedVehicles,
   onClose,
   onSaved,
+  onHeaderPointerDown,
+  canEditMoney = true,
 }: {
   staffId: number | null;
   preselectedSiteId?: number | null;
@@ -580,6 +634,8 @@ export function AssignmentPanel({
   cachedVehicles?: VehicleInfo[];
   onClose: () => void;
   onSaved: () => void;
+  onHeaderPointerDown?: (e: React.PointerEvent) => void; // C-8: ヘッダ掴みでモーダル移動
+  canEditMoney?: boolean; // §6: お金（単価・加算手当）入力を表示するか（管理者のみ true）
 }) {
   const isEdit = !!existingAssignment;
   const isSiteMode = !staffIdProp && !!preselectedSiteId;
@@ -623,6 +679,11 @@ export function AssignmentPanel({
   const siteSelectRef = useRef<HTMLSelectElement>(null);
   const [conflicts, setConflicts] = useState<ConflictWarning[]>([]);
   const [insuranceWarning, setInsuranceWarning] = useState<InsuranceWarning | null>(null);
+  const [qualificationWarning, setQualificationWarning] = useState<QualificationWarning | null>(null);
+  // C-8: 持ち物・備考の「拡大入力」専用ダイアログ。form の該当フィールドを大きく編集する。
+  const [expandedField, setExpandedField] = useState<
+    null | { key: "belongings" | "notes"; label: string; placeholder?: string }
+  >(null);
   const [vehicleConflicts, setVehicleConflicts] = useState<VehicleConflictWarning[]>([]);
   const [orderHeadcountWarnings, setOrderHeadcountWarnings] = useState<
     { date: string; orderHeadcount: number; projectedCount: number; overflow: number }[]
@@ -745,13 +806,11 @@ export function AssignmentPanel({
     if (!site) return;
     setForm((p) => ({
       ...p,
-      belongings: p.belongings || (site as { belongings?: string | null }).belongings || "",
-      contactName: p.contactName || (site as { contactName1?: string | null }).contactName1 || "",
-      contactTel: p.contactTel || (site as { contactTel1?: string | null }).contactTel1 || "",
-      transportation:
-        p.transportation || (site as { transportation?: string | null }).transportation || "",
+      belongings: p.belongings || site.belongings || "",
+      contactName: p.contactName || site.contactName1 || "",
+      contactTel: p.contactTel || site.contactTel1 || "",
+      transportation: p.transportation || site.transportation || "",
     }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.jobSiteId, sites, isEdit]);
 
   // スタッフ一覧の取得:
@@ -855,6 +914,7 @@ export function AssignmentPanel({
             : data.conflicts || [],
         );
         setInsuranceWarning(data.insuranceWarning || null);
+        setQualificationWarning(data.qualificationWarning || null);
         setVehicleConflicts(data.vehicleConflicts || []);
         setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
         setShowForceConfirm(true);
@@ -864,6 +924,7 @@ export function AssignmentPanel({
         toast.success(isBulk ? `${selectedStaffIds.length}名を配置しました` : "配置を作成しました");
         setConflicts([]);
         setInsuranceWarning(null);
+        setQualificationWarning(null);
         setVehicleConflicts([]);
         setOrderHeadcountWarnings([]);
         setShowForceConfirm(false);
@@ -927,6 +988,7 @@ export function AssignmentPanel({
         const data = await res.json();
         setConflicts(data.conflicts || []);
         setInsuranceWarning(data.insuranceWarning || null);
+        setQualificationWarning(data.qualificationWarning || null);
         setVehicleConflicts(data.vehicleConflicts || []);
         setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
         setShowForceConfirm(true);
@@ -975,6 +1037,7 @@ export function AssignmentPanel({
             ),
           );
           setInsuranceWarning(data.insuranceWarning || null);
+          setQualificationWarning(data.qualificationWarning || null);
           setVehicleConflicts(data.vehicleConflicts || []);
           setOrderHeadcountWarnings(data.orderHeadcountWarnings || []);
           setShowForceConfirm(true);
@@ -992,6 +1055,7 @@ export function AssignmentPanel({
       }
       setConflicts([]);
       setInsuranceWarning(null);
+      setQualificationWarning(null);
       setVehicleConflicts([]);
       setOrderHeadcountWarnings([]);
       setShowForceConfirm(false);
@@ -1346,7 +1410,15 @@ export function AssignmentPanel({
         ?.qualificationBonuses
         ?.filter((qb) => qb.isRequired)
         .map((qb) => qb.qualificationId) ?? [],
+    workCategory: (selectedSite as { workCategory?: string | null } | undefined)?.workCategory ?? null,
   }), [selectedSite]);
+
+  // 現場マスタ（/api/sites の全スカラー）から選択中現場を解決。編集モードでも
+  // workerPricingPolicy / address / mapUrl を確実に得るため displayAssignment.jobSite ではなく sites を引く。
+  const fullSelectedSite = sites.find((s) => s.id === form.jobSiteId) ?? null;
+  // C-9: 単価フリー入力の挙動を現場の単価方針に連動させる。
+  const pricingPolicy = fullSelectedSite?.workerPricingPolicy ?? null; // possible / impossible / case_by_case
+  const pricingDisabled = pricingPolicy === "impossible";
   const hasAnyRequirement =
     !!siteRequirements.requiredInsurance ||
     siteRequirements.requiredQualificationIds.length > 0;
@@ -1399,8 +1471,15 @@ export function AssignmentPanel({
 
   return (
     <div className="w-full bg-card rounded-xl border shadow-2xl flex flex-col max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-6rem)]">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b bg-muted/30 rounded-t-xl">
+      {/* Header（C-8: ここを掴んでウィンドウ移動できる） */}
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2 px-4 py-3 border-b bg-muted/30 rounded-t-xl",
+          onHeaderPointerDown && "cursor-move select-none",
+        )}
+        onPointerDown={onHeaderPointerDown}
+        title={onHeaderPointerDown ? "ドラッグでウィンドウを移動" : undefined}
+      >
         <div className="min-w-0">
           <h3 className="font-bold text-base">
             {isEdit ? "配置編集" : "新規配置"}
@@ -1655,30 +1734,53 @@ export function AssignmentPanel({
               </select>
             </div>
 
+            {/* §6: お金（単価）入力は管理者のみ */}
+            {canEditMoney && (
             <div>
               <Label className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                 <Coins className="h-3 w-3" /> 現場別日給 (上書き)
+                {pricingPolicy === "case_by_case" && (
+                  <span className="ml-1 text-[9px] px-1 rounded bg-amber-100 text-amber-800 font-medium">都度相談</span>
+                )}
+                {pricingPolicy === "impossible" && (
+                  <span className="ml-1 text-[9px] px-1 rounded bg-muted text-muted-foreground font-medium">単価変更不可</span>
+                )}
               </Label>
               <Input
                 type="number"
                 inputMode="numeric"
                 min={0}
                 step={100}
-                placeholder="空欄=スタッフ基本日当を使用"
-                value={form.dailyRateOverride}
+                disabled={pricingDisabled}
+                placeholder={
+                  pricingDisabled
+                    ? "この現場は単価変更不可（マスタ）"
+                    : pricingPolicy === "case_by_case"
+                      ? "都度相談 — 案件ごとに単価を入力"
+                      : "空欄=スタッフ基本日当を使用"
+                }
+                value={pricingDisabled ? "" : form.dailyRateOverride}
                 onChange={(e) =>
                   setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))
                 }
-                className="text-xs h-8"
+                className="text-xs h-8 disabled:opacity-60 disabled:cursor-not-allowed"
               />
               <p className="text-[10px] text-muted-foreground mt-1">
-                ※ オーダー人数は日毎に変わるため、下の「日別 オーダー人数 / 単価」表で各日に設定してください
+                {pricingPolicy === "case_by_case"
+                  ? "都度相談の現場です。案件ごとに単価をフリー入力できます。"
+                  : pricingDisabled
+                    ? "現場マスタで「単価変更不可」に設定されています。"
+                    : "※ オーダー人数は日毎に変わるため、下の「日別 オーダー人数 / 単価」表で各日に設定してください"}
               </p>
             </div>
+            )}
 
             {/* 持ち物 */}
             <div>
-              <Label className="text-[11px] text-muted-foreground mb-1.5">持ち物</Label>
+              <div className="flex items-center justify-between mb-1.5">
+                <Label className="text-[11px] text-muted-foreground">持ち物</Label>
+                <ExpandButton onClick={() => setExpandedField({ key: "belongings", label: "持ち物", placeholder: "ヘルメット、安全靴、手袋 …" })} />
+              </div>
               <Textarea
                 value={form.belongings}
                 onChange={(e) => setForm((p) => ({ ...p, belongings: e.target.value }))}
@@ -1722,6 +1824,8 @@ export function AssignmentPanel({
             </div>
 
             {/* 加算手当 */}
+            {/* §6: 加算手当（お金）は管理者のみ */}
+            {canEditMoney && (
             <div className="space-y-2">
               <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <Coins className="h-3 w-3" /> 加算手当
@@ -1760,11 +1864,15 @@ export function AssignmentPanel({
                 </Button>
               </div>
             </div>
+            )}
 
             <div>
-              <Label className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                <StickyNote className="h-3 w-3" /> 備考
-              </Label>
+              <div className="flex items-center justify-between mb-1">
+                <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <StickyNote className="h-3 w-3" /> 備考
+                </Label>
+                <ExpandButton onClick={() => setExpandedField({ key: "notes", label: "備考", placeholder: "この配置に関する注意点など" })} />
+              </div>
               <Textarea
                 value={form.notes}
                 onChange={(e) =>
@@ -1815,6 +1923,27 @@ export function AssignmentPanel({
                       </span>
                       受入可能です
                     </div>
+                  </div>
+                )}
+                {qualificationWarning && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-red-700 font-medium text-xs">
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      資格・作業区分の不一致
+                    </div>
+                    {qualificationWarning.missingQualifications.length > 0 && (
+                      <div className="text-[11px] text-red-600">
+                        必須資格が不足: <span className="font-medium">{qualificationWarning.missingQualifications.join("、")}</span>
+                      </div>
+                    )}
+                    {qualificationWarning.workCategoryMismatch && (
+                      <div className="text-[11px] text-red-600">
+                        作業区分 <span className="font-medium">{qualificationWarning.workCategoryMismatch}</span> に対応していません
+                      </div>
+                    )}
+                    {qualificationWarning.staffNames && qualificationWarning.staffNames.length > 0 && (
+                      <div className="text-[10px] text-red-500">対象: {qualificationWarning.staffNames.join("、")}</div>
+                    )}
                   </div>
                 )}
                 {vehicleConflicts.length > 0 && (
@@ -2070,6 +2199,23 @@ export function AssignmentPanel({
               />
             </div>
 
+            {/* C-7: 現場マスタの住所・GoogleMap を作成時にも表示（マスタ書き戻しはしない） */}
+            {!isEdit && fullSelectedSite && (fullSelectedSite.address || fullSelectedSite.mapUrl) && (
+              <div className="rounded-lg border bg-muted/20 p-2 space-y-1.5">
+                {fullSelectedSite.address && (
+                  <div className="flex items-start gap-1 text-[11px] text-muted-foreground">
+                    <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span className="break-words">{fullSelectedSite.address}</span>
+                  </div>
+                )}
+                <SiteMap
+                  address={fullSelectedSite.address ?? null}
+                  mapUrl={fullSelectedSite.mapUrl ?? null}
+                  siteName={fullSelectedSite.name}
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label className="text-[11px] text-muted-foreground">開始日 *</Label>
@@ -2234,29 +2380,48 @@ export function AssignmentPanel({
                   現場から指示された必要人数。日毎の調整は作成後に編集画面で行えます
                 </p>
               </div>
+              {/* §6: お金（単価）入力は管理者のみ */}
+              {canEditMoney && (
               <div>
                 <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
                   <Coins className="h-3 w-3" /> 現場別日給 (上書き)
+                  {pricingPolicy === "case_by_case" && (
+                    <span className="ml-1 text-[9px] px-1 rounded bg-amber-100 text-amber-800 font-medium">都度相談</span>
+                  )}
+                  {pricingPolicy === "impossible" && (
+                    <span className="ml-1 text-[9px] px-1 rounded bg-muted text-muted-foreground font-medium">単価変更不可</span>
+                  )}
                 </Label>
                 <Input
                   type="number"
                   inputMode="numeric"
                   min={0}
                   step={100}
-                  placeholder="空欄=スタッフ基本日当"
-                  value={form.dailyRateOverride}
+                  disabled={pricingDisabled}
+                  placeholder={
+                    pricingDisabled
+                      ? "この現場は単価変更不可（マスタ）"
+                      : pricingPolicy === "case_by_case"
+                        ? "都度相談 — 案件ごとに単価を入力"
+                        : "空欄=スタッフ基本日当"
+                  }
+                  value={pricingDisabled ? "" : form.dailyRateOverride}
                   onChange={(e) =>
                     setForm((p) => ({ ...p, dailyRateOverride: e.target.value }))
                   }
-                  className="text-xs h-9"
+                  className="text-xs h-9 disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
+              )}
             </div>
 
             <div>
-              <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
-                持ち物
-              </Label>
+              <div className="flex items-center justify-between mb-1.5">
+                <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  持ち物
+                </Label>
+                <ExpandButton onClick={() => setExpandedField({ key: "belongings", label: "持ち物", placeholder: "ヘルメット、安全靴、手袋 …" })} />
+              </div>
               <Textarea
                 value={form.belongings}
                 onChange={(e) =>
@@ -2300,6 +2465,8 @@ export function AssignmentPanel({
             </div>
 
             {/* 加算手当（路内・出張・とび・食事 等） */}
+            {/* §6: 加算手当（お金）は管理者のみ */}
+            {canEditMoney && (
             <div className="space-y-2">
               <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <Coins className="h-3 w-3" /> 加算手当
@@ -2338,11 +2505,15 @@ export function AssignmentPanel({
                 </Button>
               </div>
             </div>
+            )}
 
             <div>
-              <Label className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
-                <StickyNote className="h-3 w-3" /> 備考
-              </Label>
+              <div className="flex items-center justify-between mb-1.5">
+                <Label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <StickyNote className="h-3 w-3" /> 備考
+                </Label>
+                <ExpandButton onClick={() => setExpandedField({ key: "notes", label: "備考", placeholder: "この配置に関する注意点など" })} />
+              </div>
               <Textarea
                 value={form.notes}
                 onChange={(e) =>
@@ -2404,6 +2575,27 @@ export function AssignmentPanel({
                     </div>
                   </div>
                 )}
+                {qualificationWarning && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 space-y-1">
+                    <div className="flex items-center gap-1.5 text-red-700 font-medium text-xs">
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      資格・作業区分の不一致
+                    </div>
+                    {qualificationWarning.missingQualifications.length > 0 && (
+                      <div className="text-[11px] text-red-600">
+                        必須資格が不足: <span className="font-medium">{qualificationWarning.missingQualifications.join("、")}</span>
+                      </div>
+                    )}
+                    {qualificationWarning.workCategoryMismatch && (
+                      <div className="text-[11px] text-red-600">
+                        作業区分 <span className="font-medium">{qualificationWarning.workCategoryMismatch}</span> に対応していません
+                      </div>
+                    )}
+                    {qualificationWarning.staffNames && qualificationWarning.staffNames.length > 0 && (
+                      <div className="text-[10px] text-red-500">対象: {qualificationWarning.staffNames.join("、")}</div>
+                    )}
+                  </div>
+                )}
                 {vehicleConflicts.length > 0 && (
                   <div className="p-3 rounded-lg bg-orange-50 border border-orange-200 space-y-1.5">
                     <div className="flex items-center gap-1.5 text-orange-700 font-medium text-xs">
@@ -2456,6 +2648,7 @@ export function AssignmentPanel({
                   setShowForceConfirm(false);
                   setConflicts([]);
                   setInsuranceWarning(null);
+                  setQualificationWarning(null);
                   setVehicleConflicts([]);
                   setOrderHeadcountWarnings([]);
                 }}
@@ -2552,6 +2745,56 @@ export function AssignmentPanel({
           </Button>
         )}
       </div>
+
+      {/* C-8: 持ち物・備考の拡大入力ダイアログ。ドラッグ transform の影響を避けるため body へポータル。 */}
+      {expandedField &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setExpandedField(null)}
+            />
+            <div className="relative w-full max-w-2xl bg-card rounded-xl border shadow-2xl flex flex-col max-h-[85vh]">
+              <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 rounded-t-xl">
+                <h4 className="font-semibold text-sm">{expandedField.label}（拡大入力）</h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={() => setExpandedField(null)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="p-4 flex-1 overflow-auto">
+                <Textarea
+                  autoFocus
+                  value={form[expandedField.key]}
+                  onChange={(e) => {
+                    const key = expandedField.key;
+                    setForm((p) => ({ ...p, [key]: e.target.value }));
+                  }}
+                  placeholder={expandedField.placeholder}
+                  className="text-sm w-full resize-none min-h-[45vh]"
+                />
+              </div>
+              <div className="px-4 py-3 border-t flex justify-end gap-2">
+                <p className="text-[11px] text-muted-foreground mr-auto self-center">
+                  内容はそのまま反映されます。確定はパネルの保存ボタンで行ってください。
+                </p>
+                <Button size="sm" onClick={() => setExpandedField(null)}>
+                  閉じる
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

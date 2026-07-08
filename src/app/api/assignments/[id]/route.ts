@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
+import { requireAuth, requireRole, isAuthError, canEditMoney } from "@/lib/api-auth";
 import { updateAssignmentSchema, parseId } from "@/lib/validations";
 import { checkAssignmentConflicts, checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
 import {
@@ -32,6 +32,20 @@ export async function GET(
     },
   });
   if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // staff（個人）は自分の配置のみ・金額は見せない（議事録 §6）
+  if (auth.role === "staff") {
+    if (assignment.staffId == null || assignment.staffId !== auth.staffId) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    return NextResponse.json({
+      ...assignment,
+      dailyRateOverride: null,
+      allowances: [],
+      assignmentDays: assignment.assignmentDays.map((d) => ({ ...d, dailyRateOverride: null })),
+    });
+  }
+
   return NextResponse.json(assignment);
 }
 
@@ -39,7 +53,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 既存配置の更新（入力）は管理者・番頭・スケジュール入力専用が可（個人は不可）
+  const auth = await requireRole("admin", "office", "schedule");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;
@@ -54,6 +69,12 @@ export async function PUT(
   }
 
   const { force, allowances, ...updateData } = parsed.data;
+
+  // 議事録 §6: お金（単価・加算手当）の編集は管理者のみ。非管理者の更新からは落とす。
+  const editMoney = canEditMoney(auth.role);
+  if (!editMoney) {
+    delete updateData.dailyRateOverride;
+  }
 
   // staffId / vehicleId が変更される場合は競合・保険・車両チェック
   if (!force) {
@@ -79,7 +100,7 @@ export async function PUT(
     const vehicleChanged = newVehicleId !== current.vehicleId;
     if (staffChanged || vehicleChanged) {
       const dates = current.assignmentDays.map((d) => d.date);
-      const [{ conflicts, insuranceWarning, vehicleConflicts }, orderHeadcountWarnings] =
+      const [{ conflicts, insuranceWarning, qualificationWarning, vehicleConflicts }, orderHeadcountWarnings] =
         await Promise.all([
           checkAssignmentConflicts({
             staffId: newStaffId ?? null,
@@ -99,7 +120,7 @@ export async function PUT(
             : Promise.resolve([]),
         ]);
       if (
-        (staffChanged && (conflicts.length > 0 || insuranceWarning)) ||
+        (staffChanged && (conflicts.length > 0 || insuranceWarning || qualificationWarning)) ||
         (vehicleChanged && vehicleConflicts && vehicleConflicts.length > 0) ||
         orderHeadcountWarnings.length > 0
       ) {
@@ -108,6 +129,7 @@ export async function PUT(
             hasWarnings: true,
             conflicts: staffChanged ? conflicts : [],
             insuranceWarning: staffChanged ? insuranceWarning : null,
+            qualificationWarning: staffChanged ? qualificationWarning : null,
             vehicleConflicts: vehicleChanged ? vehicleConflicts ?? [] : [],
             orderHeadcountWarnings,
           },
@@ -123,8 +145,8 @@ export async function PUT(
       where: { id: numId },
       data: updateData,
     });
-    if (allowances !== undefined) {
-      // 全置換: 現状を削除してから新しい一覧を投入
+    if (editMoney && allowances !== undefined) {
+      // 全置換: 現状を削除してから新しい一覧を投入（加算手当=お金なので管理者のみ）
       await tx.assignmentAllowance.deleteMany({ where: { assignmentId: numId } });
       if (allowances.length > 0) {
         await tx.assignmentAllowance.createMany({
@@ -160,7 +182,8 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 配置の削除は管理者・番頭のみ（スケジュール入力専用・個人は不可）
+  const auth = await requireRole("admin", "office");
   if (isAuthError(auth)) return auth;
 
   const { id } = await params;

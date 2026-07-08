@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, requireRole, isAuthError } from "@/lib/api-auth";
+import { requireAuth, requireRole, isAuthError, canEditMoney } from "@/lib/api-auth";
 import { createAssignmentSchema } from "@/lib/validations";
 import { checkAssignmentConflicts, checkOrderHeadcountOverflow } from "@/lib/assignment-validation";
 import { parseJsonBody, jsonBodyError } from "@/lib/api-json";
@@ -60,11 +60,20 @@ export async function GET(request: NextRequest) {
     orderBy: { startDate: "desc" },
   });
 
-  return NextResponse.json(assignments);
+  // staff には金額（単価）を返さない（議事録 §6: 個人はお金情報不要）
+  const sanitized = isStaffRole
+    ? assignments.map((a) => ({
+        ...a,
+        dailyRateOverride: null,
+        assignmentDays: a.assignmentDays.map((d) => ({ ...d, dailyRateOverride: null })),
+      }))
+    : assignments;
+  return NextResponse.json(sanitized);
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireRole("admin", "manager", "office");
+  // 配置の新規作成は管理者・番頭のみ（スケジュール入力専用・個人は不可）
+  const auth = await requireRole("admin", "office");
   if (isAuthError(auth)) return auth;
 
   const body = await parseJsonBody(request);
@@ -94,6 +103,9 @@ export async function POST(request: NextRequest) {
     force,
   } = parsed.data;
 
+  // 議事録 §6: お金（単価・加算手当）の編集は管理者のみ。番頭が送ってきても落とす。
+  const editMoney = canEditMoney(auth.role);
+
   // Generate individual day records（日曜も含む。休みは日別トグルで管理）
   const dates: string[] = [];
   const cur = new Date(startDate);
@@ -105,7 +117,7 @@ export async function POST(request: NextRequest) {
 
   // --- Conflict & Insurance & Vehicle & Order-Headcount Check ---
   if (!force && dates.length > 0) {
-    const [{ conflicts, insuranceWarning, vehicleConflicts }, orderHeadcountWarnings] =
+    const [{ conflicts, insuranceWarning, qualificationWarning, vehicleConflicts }, orderHeadcountWarnings] =
       await Promise.all([
         checkAssignmentConflicts({
           staffId: staffId ?? null,
@@ -124,6 +136,7 @@ export async function POST(request: NextRequest) {
     if (
       conflicts.length > 0 ||
       insuranceWarning ||
+      qualificationWarning ||
       (vehicleConflicts && vehicleConflicts.length > 0) ||
       orderHeadcountWarnings.length > 0
     ) {
@@ -132,6 +145,7 @@ export async function POST(request: NextRequest) {
           hasWarnings: true,
           conflicts,
           insuranceWarning,
+          qualificationWarning,
           vehicleConflicts: vehicleConflicts ?? [],
           orderHeadcountWarnings,
         },
@@ -151,7 +165,7 @@ export async function POST(request: NextRequest) {
       shiftType: shiftType || "day",
       startTime: startTime || "08:00",
       endTime: endTime || "18:00",
-      dailyRateOverride: dailyRateOverride ?? null,
+      dailyRateOverride: editMoney ? (dailyRateOverride ?? null) : null,
       belongings: belongings ?? null,
       contactName: contactName ?? null,
       contactTel: contactTel ?? null,
@@ -164,7 +178,7 @@ export async function POST(request: NextRequest) {
           orderHeadcount: orderHeadcount ?? null,
         })),
       },
-      ...(allowances && allowances.length > 0
+      ...(editMoney && allowances && allowances.length > 0
         ? {
             allowances: {
               create: allowances.map((a) => ({
