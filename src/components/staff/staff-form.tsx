@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label, RequiredMark } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { StaffDocuments } from "./staff-documents";
 import { toast } from "sonner";
 
 type BranchOffice = { id: number; name: string };
@@ -22,6 +23,9 @@ type StaffData = {
   hasShaho?: boolean;
   hasKokuho?: boolean;
   hasIchiriOyakata?: boolean;
+  canChikuro?: boolean;
+  canRegular?: boolean;
+  canSpot?: boolean;
   residenceType?: string;
   role: string;
   dailyRate: number | null;
@@ -56,6 +60,9 @@ export function StaffForm({
     hasShaho: staff?.hasShaho ?? false,
     hasKokuho: staff?.hasKokuho ?? false,
     hasIchiriOyakata: staff?.hasIchiriOyakata ?? false,
+    canChikuro: staff?.canChikuro ?? true,
+    canRegular: staff?.canRegular ?? true,
+    canSpot: staff?.canSpot ?? true,
     residenceType: staff?.residenceType || "commuter",
     role: staff?.role || "worker",
     dailyRate: staff?.dailyRate || 15000,
@@ -241,6 +248,42 @@ export function StaffForm({
             </div>
           </div>
 
+          <div className="space-y-2">
+            <Label>対応可能な作業区分（配置時の絞り込みに使用）</Label>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.canChikuro}
+                  onChange={(e) => update("canChikuro", e.target.checked)}
+                  className="h-4 w-4"
+                />
+                築炉
+              </label>
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.canRegular}
+                  onChange={(e) => update("canRegular", e.target.checked)}
+                  className="h-4 w-4"
+                />
+                レギュラー
+              </label>
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.canSpot}
+                  onChange={(e) => update("canSpot", e.target.checked)}
+                  className="h-4 w-4"
+                />
+                スポット
+              </label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              チェックを外すと、その作業区分の現場へ配置するとき警告が出ます（既定は全て対応可）。
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>寮区分</Label>
@@ -293,6 +336,17 @@ export function StaffForm({
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="form-section">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-4">免許証・書類</h2>
+        {isEdit && staff?.id ? (
+          <StaffDocuments staffId={staff.id} canEdit={!readOnly} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            スタッフを登録すると、免許証などの画像・PDF を添付できます。
+          </p>
+        )}
       </div>
 
       <div className="flex gap-3">

@@ -18,6 +18,10 @@ export const createStaffSchema = z.object({
   hasShaho: z.boolean().optional(),
   hasKokuho: z.boolean().optional(),
   hasIchiriOyakata: z.boolean().optional(),
+  // C-4: 対応可能な作業区分（築炉/レギュラー/スポット）
+  canChikuro: z.boolean().optional(),
+  canRegular: z.boolean().optional(),
+  canSpot: z.boolean().optional(),
   residenceType: z.enum(["dorm1", "dorm2", "commuter"]).default("commuter"),
   role: z.enum(["admin", "manager", "office", "worker"]).default("worker"),
   dailyRate: z.number().int().nullable().optional(),
@@ -50,7 +54,9 @@ export const createJobSiteSchema = z.object({
   siteCode: z.string().min(1, "現場コードは必須です"),
   name: z.string().min(1, "現場名は必須です"),
   branchOfficeId: positiveInt,
-  customerId: z.number().int().nullable().optional(),
+  // M-1: 得意先(親)→現場(子)の階層を必ず保持するため customerId は必須。
+  // 編集は updateJobSiteSchema(.partial())で任意になるため既存挙動を壊さない。
+  customerId: positiveInt,
   clientCode: z.string().nullable().optional(),
   clientName: z.string().nullable().optional(),
   address: z.string().nullable().optional(),

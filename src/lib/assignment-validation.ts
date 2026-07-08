@@ -15,9 +15,19 @@ export type VehicleConflict = {
   dates: string[];
 };
 
+// 必須資格不足 / 作業区分不適合の警告（C-4）。
+// missingQualifications: 現場の必須資格のうちスタッフが保有していない資格名の一覧。
+// workCategoryMismatch: スタッフが現場の作業区分に対応不可なら該当区分の日本語名、対応可なら null。
+export type QualificationWarning = {
+  siteName: string;
+  missingQualifications: string[];
+  workCategoryMismatch: string | null;
+};
+
 export type AssignmentCheckResult = {
   conflicts: ConflictInfo[];
   insuranceWarning: InsuranceWarning | null;
+  qualificationWarning: QualificationWarning | null;
   vehicleConflicts?: VehicleConflict[];
 };
 
@@ -110,7 +120,7 @@ export async function checkAssignmentConflicts(args: {
 }): Promise<AssignmentCheckResult> {
   const { staffId, jobSiteId, dates, excludeAssignmentId, vehicleId } = args;
   if (dates.length === 0) {
-    return { conflicts: [], insuranceWarning: null };
+    return { conflicts: [], insuranceWarning: null, qualificationWarning: null };
   }
 
   const [conflictDays, staff, jobSite] = await Promise.all([
@@ -134,12 +144,34 @@ export async function checkAssignmentConflicts(args: {
     staffId != null
       ? prisma.staff.findUnique({
           where: { id: staffId },
-          select: { insuranceType: true, hasShaho: true, hasKokuho: true, hasIchiriOyakata: true, name: true },
+          select: {
+            insuranceType: true,
+            hasShaho: true,
+            hasKokuho: true,
+            hasIchiriOyakata: true,
+            name: true,
+            // 作業区分の対応可否（C-4）
+            canChikuro: true,
+            canRegular: true,
+            canSpot: true,
+            // 保有資格（必須資格チェック用）
+            staffQualifications: { include: { qualification: true } },
+          },
         })
       : Promise.resolve(null),
     prisma.jobSite.findUnique({
       where: { id: jobSiteId },
-      select: { requiredInsurance: true, name: true },
+      select: {
+        requiredInsurance: true,
+        name: true,
+        // 作業区分（C-4）
+        workCategory: true,
+        // この現場の必須資格（isRequired=true のみ）
+        qualificationBonuses: {
+          where: { isRequired: true },
+          include: { qualification: true },
+        },
+      },
     }),
   ]);
 
@@ -168,6 +200,41 @@ export async function checkAssignmentConflicts(args: {
         staffInsurance: staff.insuranceType,
         siteRequirement: jobSite.requiredInsurance,
         siteName: jobSite.name,
+      };
+    }
+  }
+
+  // 必須資格 / 作業区分チェック（C-4）。
+  // staffId が null（未割当の枠確保）の場合はスタッフが居ないので判定不能 → skip（保険警告と同じ流儀）。
+  let qualificationWarning: QualificationWarning | null = null;
+  if (staff && jobSite) {
+    // 必須資格: 現場の isRequired=true な資格のうち、スタッフが保有していないものを収集
+    const heldQualificationIds = new Set(staff.staffQualifications.map((sq) => sq.qualificationId));
+    const missingQualifications = jobSite.qualificationBonuses
+      .filter((qb) => !heldQualificationIds.has(qb.qualificationId))
+      .map((qb) => qb.qualification.name);
+
+    // 作業区分: 現場の workCategory にスタッフが対応不可なら不適合
+    const workCategoryLabel: Record<string, string> = {
+      chikuro: "築炉工事",
+      regular: "レギュラー",
+      spot: "スポット",
+    };
+    let workCategoryMismatch: string | null = null;
+    const cat = jobSite.workCategory;
+    const canHandle =
+      (cat === "chikuro" && staff.canChikuro) ||
+      (cat === "regular" && staff.canRegular) ||
+      (cat === "spot" && staff.canSpot);
+    if (!canHandle && (cat === "chikuro" || cat === "regular" || cat === "spot")) {
+      workCategoryMismatch = workCategoryLabel[cat] ?? cat;
+    }
+
+    if (missingQualifications.length > 0 || workCategoryMismatch) {
+      qualificationWarning = {
+        siteName: jobSite.name,
+        missingQualifications,
+        workCategoryMismatch,
       };
     }
   }
@@ -219,6 +286,7 @@ export async function checkAssignmentConflicts(args: {
   return {
     conflicts: Array.from(conflictSites.values()),
     insuranceWarning,
+    qualificationWarning,
     vehicleConflicts,
   };
 }

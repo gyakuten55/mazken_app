@@ -54,6 +54,10 @@ model Staff {
   hasShaho           Boolean @default(false) // 社保加入
   hasKokuho          Boolean @default(false) // 国保加入
   hasIchiriOyakata   Boolean @default(false) // 一人親方
+  // 対応可能な作業区分（C-4: 作業区分でのスタッフ絞り込み用）。既定は全可で既存挙動を変えない。
+  canChikuro         Boolean @default(true)  // 築炉工事 対応可
+  canRegular         Boolean @default(true)  // レギュラー 対応可
+  canSpot            Boolean @default(true)  // スポット 対応可
   residenceType  String   @default("commuter") // "dorm1"=寮生1, "dorm2"=寮生2, "commuter"=通い
   role           String   @default("worker")  // "admin","manager","office","worker"
   dailyRate      Int?     // 基本日当
@@ -69,10 +73,28 @@ model Staff {
   staffQualifications StaffQualification[]
   assignments         Assignment[]
   dailyPayments       DailyPayment[]
+  documents           StaffDocument[]
   user                User?
 
   @@index([branchOfficeId])
   @@map("staff")
+}
+
+// ===== スタッフ書類（免許証など画像/PDF）=====
+// S-2: 画像を専用テーブルにバイナリ保存（一覧クエリで重い data を引かないよう分離）。
+model StaffDocument {
+  id        Int      @id @default(autoincrement())
+  staffId   Int
+  name      String   // ラベル/ファイル名（例: "運転免許証"）
+  mimeType  String   // "image/jpeg" | "image/png" | "application/pdf" 等
+  size      Int      @default(0) // バイト数
+  data      Bytes    // ファイル本体（BLOB）
+  createdAt DateTime @default(now())
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@map("staff_documents")
 }
 
 // ===== スタッフ資格 =====
