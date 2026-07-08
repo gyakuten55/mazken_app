@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ChevronRight, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import { getSession } from "@/lib/auth";
 
 const ALL_COLUMNS = [
   { key: "date", label: "日付" },
@@ -15,21 +16,39 @@ const ALL_COLUMNS = [
   { key: "staffName", label: "スタッフ名" },
   { key: "branchOffice", label: "営業所" },
   { key: "insuranceType", label: "保険種別" },
+  { key: "customerCode", label: "得意先コード" },
+  { key: "customerName", label: "得意先名" },
   { key: "siteCode", label: "現場コード" },
   { key: "siteName", label: "現場名" },
-  { key: "clientName", label: "元請け" },
+  { key: "vehiclePlate", label: "車両(ナンバー)" },
+  { key: "vehicleName", label: "車両(名称)" },
   { key: "assignmentType", label: "区分（通い/出張）" },
   { key: "startTime", label: "開始時間" },
   { key: "endTime", label: "終了時間" },
+  { key: "orderHeadcount", label: "オーダー人数" },
+  { key: "dailyRate", label: "日当", adminOnly: true },
+  { key: "allowanceTotal", label: "手当合計", adminOnly: true },
 ];
 
 export default function ExportPage() {
   const today = new Date().toISOString().split("T")[0];
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
-  const [selectedColumns, setSelectedColumns] = useState<string[]>(
-    ALL_COLUMNS.map((c) => c.key)
-  );
+  const [role, setRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSession().then((s) => setRole(s?.role || null));
+  }, []);
+
+  const visibleColumns = ALL_COLUMNS.filter((c) => !c.adminOnly || role === "admin");
+
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (role) {
+      setSelectedColumns(visibleColumns.map((c) => c.key));
+    }
+  }, [role]);
   const [loading, setLoading] = useState(false);
 
   function toggleColumn(key: string) {
@@ -113,7 +132,7 @@ export default function ExportPage() {
           <div className="form-section">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-4">出力列</h2>
             <div className="grid grid-cols-2 gap-3">
-              {ALL_COLUMNS.map((col) => (
+              {visibleColumns.map((col) => (
                 <label key={col.key} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
                     checked={selectedColumns.includes(col.key)}

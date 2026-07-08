@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
       assignment: {
         include: {
           staff: { include: { branchOffice: true } },
-          jobSite: { include: { branchOffice: true } },
+          // 得意先コード／得意先名は正マスタ(Customer)を優先。旧 clientCode/clientName はフォールバック用に残置。
+          jobSite: { include: { branchOffice: true, customer: { select: { code: true, name: true } } } },
         },
       },
     },
@@ -46,18 +47,29 @@ export async function POST(request: NextRequest) {
   }
 
   // Build CSV
+  const isAdmin = auth.role === "admin";
   const allColumns = [
     { key: "date", label: "日付" },
     { key: "staffCode", label: "社員コード" },
     { key: "staffName", label: "スタッフ名" },
     { key: "branchOffice", label: "営業所" },
     { key: "insuranceType", label: "保険種別" },
+    { key: "customerCode", label: "得意先コード" },
+    { key: "customerName", label: "得意先名" },
     { key: "siteCode", label: "現場コード" },
     { key: "siteName", label: "現場名" },
-    { key: "clientName", label: "元請け" },
+    { key: "vehiclePlate", label: "車両(ナンバー)" },
+    { key: "vehicleName", label: "車両(名称)" },
     { key: "assignmentType", label: "区分" },
     { key: "startTime", label: "開始時間" },
     { key: "endTime", label: "終了時間" },
+    { key: "orderHeadcount", label: "オーダー人数" },
+    ...(isAdmin
+      ? [
+          { key: "dailyRate", label: "日当" },
+          { key: "allowanceTotal", label: "手当合計" },
+        ]
+      : []),
   ];
 
   const selectedColumns = columns && columns.length > 0
@@ -70,6 +82,9 @@ export async function POST(request: NextRequest) {
     const s = ad.assignment.staff!; // フィルタ済み
     const js = ad.assignment.jobSite;
     const a = ad.assignment;
+    const v = ad.assignment.vehicle;
+
+    const allowanceTotal = a.allowances?.reduce((sum, al) => sum + al.amount, 0) || 0;
 
     const data: Record<string, string> = {
       date: ad.date,
@@ -77,12 +92,22 @@ export async function POST(request: NextRequest) {
       staffName: s.name,
       branchOffice: `${s.branchOffice.code}_${s.branchOffice.name}`,
       insuranceType: INSURANCE_TYPES[s.insuranceType as InsuranceType] || s.insuranceType,
+      customerCode: js.customer?.code ?? js.clientCode ?? "",
+      customerName: js.customer?.name ?? js.clientName ?? "",
       siteCode: js.siteCode,
       siteName: js.name,
-      clientName: js.clientName || "",
+      vehiclePlate: v?.plateNumber ?? "",
+      vehicleName: v?.name ?? "",
       assignmentType: ASSIGNMENT_TYPES[a.assignmentType as AssignmentType] || a.assignmentType,
       startTime: a.startTime,
       endTime: a.endTime,
+      orderHeadcount: ad.orderHeadcount != null ? String(ad.orderHeadcount) : "",
+      ...(isAdmin
+        ? {
+            dailyRate: String(ad.dailyRateOverride ?? a.dailyRateOverride ?? ""),
+            allowanceTotal: String(allowanceTotal),
+          }
+        : {}),
     };
 
     return selectedColumns
