@@ -18,6 +18,8 @@ type JobSite = {
 
 type BranchOffice = { id: number; name: string; code: string; color: string };
 
+type CustomerOption = { id: number; code: string | null; name: string };
+
 const INSURANCE_OPTIONS = [
   { value: "any", label: "指定なし" },
   { value: "company_only", label: "社保のみ" },
@@ -44,11 +46,13 @@ export function SiteSelect({
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
   const [branches, setBranches] = useState<BranchOffice[]>([]);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const selectRef = useRef<HTMLSelectElement>(null);
 
   const [newSite, setNewSite] = useState({
     siteCode: "",
     name: "",
+    customerId: 0,
     clientName: "",
     branchOfficeId: 0,
     address: "",
@@ -91,6 +95,16 @@ export function SiteSelect({
     }
   }, [showNew]);
 
+  // 得意先一覧を取得（インライン現場作成でも得意先を必ず選ばせる＝親→子階層を保持）
+  useEffect(() => {
+    if (showNew && customers.length === 0) {
+      fetch("/api/customers")
+        .then((r) => (r.ok ? r.json() : []))
+        .then((data) => setCustomers(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }
+  }, [showNew]);
+
   const filtered = sites;
 
   async function handleCreateSite() {
@@ -100,6 +114,10 @@ export function SiteSelect({
     }
     if (!newSite.branchOfficeId) {
       toast.error("担当営業所を選択してください");
+      return;
+    }
+    if (!newSite.customerId) {
+      toast.error("得意先を選択してください");
       return;
     }
     setCreating(true);
@@ -127,7 +145,7 @@ export function SiteSelect({
         onSiteCreated?.(created);
         setShowNew(false);
         setNewSite({
-          siteCode: "", name: "", clientName: "", branchOfficeId: branches[0]?.id || 0,
+          siteCode: "", name: "", customerId: 0, clientName: "", branchOfficeId: branches[0]?.id || 0,
           address: "", contactName1: "", contactTel1: "", contactName2: "", contactTel2: "",
           contactName3: "", contactTel3: "", transportation: "", startDate: "", endDate: "",
           requiredInsurance: "any", notes: "", status: "active",
@@ -183,8 +201,19 @@ export function SiteSelect({
             <Input value={newSite.name} onChange={(e) => upd("name", e.target.value)} placeholder="現場名" className="h-8 text-xs" />
           </div>
           <div className="space-y-1">
-            <Label className="text-[10px] text-muted-foreground">元請け会社名</Label>
-            <Input value={newSite.clientName} onChange={(e) => upd("clientName", e.target.value)} placeholder="○○建設" className="h-8 text-xs" />
+            <Label className="text-[10px] text-muted-foreground">得意先 *</Label>
+            <select
+              className="w-full h-8 rounded-md border border-input bg-transparent px-2 py-1 text-xs"
+              value={newSite.customerId}
+              onChange={(e) => upd("customerId", parseInt(e.target.value))}
+            >
+              <option value={0}>得意先を選択...</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code ? `[${c.code}] ` : ""}{c.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="space-y-1">
             <Label className="text-[10px] text-muted-foreground">住所</Label>

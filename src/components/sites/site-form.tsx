@@ -150,6 +150,11 @@ export function SiteForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // M-1: 得意先は必須（得意先→現場の階層を保持）
+    if (!form.customerId) {
+      toast.error("得意先を選択してください");
+      return;
+    }
     setLoading(true);
 
     try {

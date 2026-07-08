@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Search, Pencil, Eye } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Search, Pencil, Eye, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +32,41 @@ export function CustomersTable({
   customers: Customer[];
   canEdit: boolean;
 }) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  // 得意先の削除/無効化（admin のみ）
+  async function handleDelete(c: Customer) {
+    if (
+      !confirm(
+        `「${c.name}」を削除しますか？紐付く現場がある場合は無効化されます。`,
+      )
+    )
+      return;
+    setDeletingId(c.id);
+    try {
+      const res = await fetch(`/api/customers/${c.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.error || "削除に失敗しました");
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      // API レスポンスの mode で論理削除/物理削除を判別
+      if (data?.mode === "deactivated") {
+        toast.success("紐付く現場があるため無効化しました");
+      } else {
+        toast.success("削除しました");
+      }
+      router.refresh();
+    } catch {
+      toast.error("エラーが発生しました");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return customers;
@@ -70,7 +106,7 @@ export function CustomersTable({
                 代表電話
               </TableHead>
               <TableHead className="w-[80px] text-right">現場数</TableHead>
-              <TableHead className="w-[60px]"></TableHead>
+              <TableHead className="w-[100px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -102,19 +138,33 @@ export function CustomersTable({
                   {c._count.jobSites}
                 </TableCell>
                 <TableCell>
-                  <Link href={`/customers/${c.id}`}>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title={canEdit ? "編集" : "詳細"}
-                    >
-                      {canEdit ? (
-                        <Pencil className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </Link>
+                  <div className="flex items-center justify-end gap-1">
+                    <Link href={`/customers/${c.id}`}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title={canEdit ? "編集" : "詳細"}
+                      >
+                        {canEdit ? (
+                          <Pencil className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </Link>
+                    {canEdit && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="削除"
+                        className="text-destructive hover:text-destructive"
+                        disabled={deletingId === c.id}
+                        onClick={() => handleDelete(c)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
