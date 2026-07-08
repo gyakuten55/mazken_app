@@ -29,7 +29,7 @@ const allBottomNavItems = [
 const moreMenuItems = [
   { href: "/customers", label: "得意先", icon: Briefcase, officeHidden: false, adminOnly: false },
   { href: "/vehicles", label: "車両管理", icon: Truck, officeHidden: false, adminOnly: false },
-  { href: "/print/work-report", label: "作業日報", icon: Printer, officeHidden: false, adminOnly: false },
+  { href: "/print/work-report", label: "配置日報", icon: Printer, officeHidden: false, adminOnly: false },
   { href: "/print/breakdown", label: "分解表", icon: Printer, officeHidden: true, adminOnly: false },
   { href: "/export", label: "CSV出力", icon: Download, officeHidden: true, adminOnly: false },
   { href: "/settings", label: "設定", icon: Settings, officeHidden: false, adminOnly: true },

@@ -241,7 +241,8 @@ export default async function AssignmentPrintPage({
           </section>
         )}
 
-        {assignment.allowances.length > 0 && (
+        {/* P-4: お金（手当金額）は作業員(staff)に見せない。「持ち物より下の金額情報を隠す」 */}
+        {session.role !== "staff" && assignment.allowances.length > 0 && (
           <section className="mb-4">
             <h2 className="text-xs font-bold tracking-wider mb-1.5 border-b border-gray-400 pb-0.5">
               加算手当

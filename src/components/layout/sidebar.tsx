@@ -55,7 +55,7 @@ const allNavItems: NavItem[] = [
   { href: "/vehicles", label: "車両管理", icon: "Truck", staffVisible: false, adminOnly: false },
   { href: "/forms", label: "出来高確認書", icon: "FileText", staffVisible: true, adminOnly: false, officeHidden: true },
   { href: "/tally", label: "日計表", icon: "Receipt", staffVisible: false, adminOnly: false },
-  { href: "/print/work-report", label: "作業日報", icon: "Printer", staffVisible: false, adminOnly: false },
+  { href: "/print/work-report", label: "配置日報", icon: "Printer", staffVisible: false, adminOnly: false },
   { href: "/print/breakdown", label: "分解表", icon: "ScrollText", staffVisible: false, adminOnly: false, officeHidden: true },
   { href: "/export", label: "CSV出力", icon: "Download", staffVisible: false, adminOnly: false, officeHidden: true },
   { href: "/users", label: "ユーザー管理", icon: "ShieldCheck", staffVisible: false, adminOnly: true },

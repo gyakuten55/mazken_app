@@ -109,7 +109,7 @@ export default async function WorkReportPage({
     <WorkReportShell branches={branches} initialDate={date} initialBranchId={branchOfficeId ?? null}>
       <article className="mx-auto max-w-[297mm] bg-white p-6 text-[12px] leading-relaxed text-black">
         <header className="border-b-2 border-black pb-2 mb-3 flex items-baseline justify-between">
-          <h1 className="text-lg font-bold">作業日報</h1>
+          <h1 className="text-lg font-bold">配置日報</h1>
           <div className="text-sm">
             {format(parseISO(date), "yyyy年 M月 d日 (E)", { locale: ja })}
             {branchOfficeId && (
