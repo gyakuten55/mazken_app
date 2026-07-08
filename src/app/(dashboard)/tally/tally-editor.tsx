@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { format, parseISO, addDays } from "date-fns";
 import { ja } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Printer, Save, Loader2, CalendarDays } from "lucide-react";
+import { ChevronLeft, ChevronRight, Printer, Save, Loader2, CalendarDays, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -150,18 +150,18 @@ function rowTotal(edit: EditableRowState): {
   offsetTotal: number;
   todayBalance: number;
 } {
+  // リフト(site*Lift)は合計に含めない（payment-utils.calcPaymentTotal と一致させる。
+  // T-2: リフトは廃止項目。列はデータ保全のため温存するが金額計算からは除外）。
   const paymentTotal =
     edit.site1BaseFee +
     edit.site1Driving +
     edit.site1Holiday +
-    edit.site1Lift +
     edit.site1Skill +
     edit.site1Other +
     edit.site1Additional +
     edit.site2BaseFee +
     edit.site2Driving +
     edit.site2Holiday +
-    edit.site2Lift +
     edit.site2Skill +
     edit.site2Other +
     edit.site2Additional;
@@ -189,6 +189,8 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
 
   const [date, setDate] = useState(initialDate);
   const [branchCode, setBranchCode] = useState(initialBranchCode);
+  // T-1: 得意先・現場・社員のコード/名称を横断する絞り込み検索（部分一致）
+  const [query, setQuery] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [editState, setEditState] = useState<Map<number, EditableRowState>>(new Map());
   const [dirtyStaffIds, setDirtyStaffIds] = useState<Set<number>>(new Set());
@@ -291,8 +293,25 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
     }
   }, [date]);
 
-  const totalStaff = rows.length;
-  const totalToday = rows.reduce((sum, r) => {
+  // T-1: 得意先/現場/社員のコード・名称で絞り込み（単一日の取得済み行をクライアント側でフィルタ）
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    const hit = (v: string | null | undefined) => !!v && v.toLowerCase().includes(q);
+    const siteHit = (s: SiteRefView | null | undefined) =>
+      !!s && (hit(s.siteCode) || hit(s.name) || hit(s.clientCode) || hit(s.clientName));
+    return rows.filter(
+      (r) =>
+        hit(r.staff.employeeCode) ||
+        hit(r.staff.name) ||
+        hit(r.staff.displayName) ||
+        siteHit(r.dailyPayment?.site1) ||
+        siteHit(r.dailyPayment?.site2),
+    );
+  }, [rows, query]);
+
+  const totalStaff = filteredRows.length;
+  const totalToday = filteredRows.reduce((sum, r) => {
     const edit = editState.get(r.staff.id);
     if (!edit) return sum;
     return sum + rowTotal(edit).todayBalance;
@@ -377,6 +396,28 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
           ))}
         </div>
 
+        {/* T-1: 得意先・現場・社員の検索（コード/名称・部分一致） */}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="得意先・現場・社員で検索"
+            className="h-10 w-44 md:w-56 pl-8 pr-8 rounded-lg border border-input bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="検索をクリア"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
         <div className="flex-1" />
 
         {readOnly ? (
@@ -428,9 +469,9 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
             読み込み中...
           </div>
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">
-            対象のスタッフがいません
+            {query.trim() ? "検索条件に一致する行がありません" : "対象のスタッフがいません"}
           </div>
         ) : (
           <table className="w-full text-sm border-collapse">
@@ -461,7 +502,7 @@ export function TallyEditor({ initialDate, branches, initialBranchCode, readOnly
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {filteredRows.map((row) => {
                 const edit = editState.get(row.staff.id) ?? emptyEditable();
                 const { paymentTotal, todayBalance } = rowTotal(edit);
                 const isDirty = dirtyStaffIds.has(row.staff.id);

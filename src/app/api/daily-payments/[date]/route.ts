@@ -83,8 +83,9 @@ export async function GET(
   const dailyPayments = await prisma.dailyPayment.findMany({
     where: { date, staffId: { in: staffIds } },
     include: {
-      site1: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true } },
-      site2: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true } },
+      // 得意先コード／得意先名は正マスタ(Customer)を優先。旧 clientCode/clientName はフォールバック用に併取得。
+      site1: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true, customer: { select: { code: true, name: true } } } },
+      site2: { select: { id: true, siteCode: true, name: true, clientCode: true, clientName: true, customer: { select: { code: true, name: true } } } },
     },
   });
   const dpByStaff = new Map(dailyPayments.map((dp) => [dp.staffId, dp]));
@@ -125,6 +126,39 @@ export async function GET(
     const hasLicense = s.staffQualifications.some(
       (sq) => sq.qualification.category === "license",
     );
+    // 得意先コード／得意先名は正マスタ(Customer)を優先し、旧 clientCode/clientName はフォールバック。
+    // customer フィールドは表示側に渡さず、得意先(親)→現場(子) の階層を保ったまま値だけ差し替える。
+    const normalizeSite = (
+      site:
+        | {
+            id: number;
+            siteCode: string;
+            name: string;
+            clientCode: string | null;
+            clientName: string | null;
+            customer: { code: string | null; name: string } | null;
+          }
+        | null,
+    ) =>
+      site
+        ? {
+            id: site.id,
+            siteCode: site.siteCode,
+            name: site.name,
+            clientCode: site.customer?.code ?? site.clientCode,
+            clientName: site.customer?.name ?? site.clientName,
+          }
+        : null;
+    const dpView = dp
+      ? {
+          ...dp,
+          site1: normalizeSite(dp.site1),
+          site2: normalizeSite(dp.site2),
+          paymentTotal: calcPaymentTotal(dp),
+          offsetTotal: calcOffsetTotal(dp),
+          todayBalance,
+        }
+      : null;
     return {
       staff: {
         id: s.id,
@@ -135,14 +169,7 @@ export async function GET(
         hasLicense,
         branchOffice: s.branchOffice,
       },
-      dailyPayment: dp
-        ? {
-            ...dp,
-            paymentTotal: calcPaymentTotal(dp),
-            offsetTotal: calcOffsetTotal(dp),
-            todayBalance,
-          }
-        : null,
+      dailyPayment: dpView,
       priorBalance,
       cumulativeBalance,
     };
