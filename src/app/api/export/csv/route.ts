@@ -31,6 +31,9 @@ export async function POST(request: NextRequest) {
           staff: { include: { branchOffice: true } },
           // 得意先コード／得意先名は正マスタ(Customer)を優先。旧 clientCode/clientName はフォールバック用に残置。
           jobSite: { include: { branchOffice: true, customer: { select: { code: true, name: true } } } },
+          // 車両(ナンバー/名称)と手当合計の列出力用（§7 CSV拡張）
+          vehicle: true,
+          allowances: true,
         },
       },
     },

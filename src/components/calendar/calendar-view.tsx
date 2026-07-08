@@ -522,7 +522,7 @@ export function CalendarView({
     const team: { staffName: string; startTime: string; branchColor: string }[] = [];
     for (const s of staffRows) {
       for (const a of s.assignments) {
-        if (a.jobSiteId === siteId) {
+        if (a.jobSite.id === siteId) {
           if (a.assignmentDays.some(d => d.date === date && d.status === "scheduled")) {
             team.push({
               staffName: s.displayName || s.name,
@@ -2075,7 +2075,7 @@ export function CalendarView({
                                             </span>
                                           )}
                                           {entry.assignment.vehicleId && vehicleConflicts.some(vc => vc.date === dateStr && vc.vehicleId === entry.assignment.vehicleId) && !isPreDeclined && (
-                                            <Truck className="h-2.5 w-2.5 text-orange-600 shrink-0" title="車両重複警告" />
+                                            <span title="車両重複警告" className="inline-flex shrink-0"><Truck className="h-2.5 w-2.5 text-orange-600" /></span>
                                           )}
                                         </div>
                                         <div className="text-[9px] text-muted-foreground/70 leading-tight">
@@ -2321,24 +2321,22 @@ export function CalendarView({
                                               </span>
                                             )}
                                             {hasVehicleConflict && !isPreDeclined && (
-                                              <Truck className="h-2.5 w-2.5 text-orange-600 shrink-0" title="車両重複警告" />
+                                              <span title="車両重複警告" className="inline-flex shrink-0"><Truck className="h-2.5 w-2.5 text-orange-600" /></span>
                                             )}
                                           </div>
                                           <div className="text-muted-foreground/70 text-[10px] flex items-center justify-between">
                                             <span>{a.startTime}-{a.endTime}</span>
                                             {isReadOnly && (
                                               <Popover>
-                                                <PopoverTrigger asChild>
-                                                  <button
-                                                    className="p-1 -mr-1 hover:bg-black/5 rounded transition-colors text-primary flex items-center gap-0.5"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    title="現場メンバーを確認"
-                                                  >
-                                                    <Users className="h-3 w-3" />
-                                                    <span className="text-[9px] font-bold">
-                                                      {getTeamForSite(a.jobSiteId, dateStr).length}
-                                                    </span>
-                                                  </button>
+                                                <PopoverTrigger
+                                                  className="p-1 -mr-1 hover:bg-black/5 rounded transition-colors text-primary flex items-center gap-0.5"
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  title="現場メンバーを確認"
+                                                >
+                                                  <Users className="h-3 w-3" />
+                                                  <span className="text-[9px] font-bold">
+                                                    {getTeamForSite(a.jobSite.id, dateStr).length}
+                                                  </span>
                                                 </PopoverTrigger>
                                                 <PopoverContent className="w-56 p-2 space-y-2" onClick={(e) => e.stopPropagation()}>
                                                   <div className="flex items-center gap-2 border-b pb-1.5 mb-1.5">
@@ -2346,7 +2344,7 @@ export function CalendarView({
                                                     <h3 className="text-xs font-bold truncate">{a.jobSite.name}</h3>
                                                   </div>
                                                   <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
-                                                    {getTeamForSite(a.jobSiteId, dateStr).map((member, i) => (
+                                                    {getTeamForSite(a.jobSite.id, dateStr).map((member, i) => (
                                                       <div key={i} className="flex items-center justify-between text-[11px] py-0.5 border-b border-muted/30 last:border-0">
                                                         <div className="flex items-center gap-1.5 min-w-0">
                                                           <div
